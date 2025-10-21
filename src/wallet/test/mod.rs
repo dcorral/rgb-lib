@@ -61,6 +61,7 @@ const AMOUNT_INFLATION: u64 = 400;
 const AMOUNT_SMALL: u64 = 66;
 const FEE_RATE: u64 = 2;
 const FEE_MSG_LOW: &str = "value under minimum 1";
+const FEE_MSG_OVER: &str = "value overflows";
 const EMPTY_MSG: &str = "must contain at least one character.";
 const IDENT_EMPTY_MSG: &str = "ident must contain at least one character";
 const IDENT_TOO_LONG_MSG: &str = "string has invalid length.";

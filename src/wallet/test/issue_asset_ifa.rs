@@ -360,6 +360,22 @@ fn fail() {
     );
     assert!(matches!(result, Err(Error::TooHighIssuanceAmounts)));
 
+    // inflation overflow
+    let result =
+        test_issue_asset_ifa_result(&mut wallet, &online, Some(&[1]), Some(&[u64::MAX]), 0, None);
+    assert!(matches!(result, Err(Error::TooHighInflationAmounts)));
+
+    // supply + inflation overflow
+    let result = test_issue_asset_ifa_result(
+        &mut wallet,
+        &online,
+        Some(&[u64::MAX]),
+        Some(&[u64::MAX]),
+        0,
+        None,
+    );
+    assert!(matches!(result, Err(Error::TooHighInflationAmounts)));
+
     // invalid ticker: empty
     let result = wallet.issue_asset_ifa(
         s!(""),

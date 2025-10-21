@@ -201,15 +201,54 @@ pub(crate) fn test_inflate(
     asset_id: &str,
     inflation_amounts: &[u64],
 ) -> OperationResult {
-    wallet
-        .inflate(
-            online.clone(),
-            asset_id.to_string(),
-            inflation_amounts.to_vec(),
-            FEE_RATE,
-            MIN_CONFIRMATIONS,
-        )
-        .unwrap()
+    test_inflate_result(wallet, online, asset_id, inflation_amounts).unwrap()
+}
+
+pub(crate) fn test_inflate_result(
+    wallet: &mut Wallet,
+    online: &Online,
+    asset_id: &str,
+    inflation_amounts: &[u64],
+) -> Result<OperationResult, Error> {
+    wallet.inflate(
+        online.clone(),
+        asset_id.to_string(),
+        inflation_amounts.to_vec(),
+        FEE_RATE,
+        MIN_CONFIRMATIONS,
+    )
+}
+
+pub(crate) fn test_inflate_begin(
+    wallet: &mut Wallet,
+    online: &Online,
+    asset_id: &str,
+    inflation_amounts: &[u64],
+) -> String {
+    test_inflate_begin_result(wallet, online, asset_id, inflation_amounts).unwrap()
+}
+
+pub(crate) fn test_inflate_begin_result(
+    wallet: &mut Wallet,
+    online: &Online,
+    asset_id: &str,
+    inflation_amounts: &[u64],
+) -> Result<String, Error> {
+    wallet.inflate_begin(
+        online.clone(),
+        asset_id.to_string(),
+        inflation_amounts.to_vec(),
+        FEE_RATE,
+        MIN_CONFIRMATIONS,
+    )
+}
+
+pub(crate) fn test_inflate_end_result(
+    wallet: &mut Wallet,
+    online: &Online,
+    signed_psbt: &str,
+) -> Result<OperationResult, Error> {
+    wallet.inflate_end(online.clone(), signed_psbt.to_string())
 }
 
 #[cfg(any(feature = "electrum", feature = "esplora"))]

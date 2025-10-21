@@ -10,9 +10,6 @@ fn success() {
     let (mut wallet, online) = get_funded_wallet!();
     let (mut rcv_wallet, rcv_online) = get_funded_wallet!();
 
-    // create more UTXOs
-    let _ = test_create_utxos_default(&mut wallet, &online);
-
     // issue
     let issue_amounts = [AMOUNT, AMOUNT];
     let inflation_rights = [100, 500, 200];
@@ -24,30 +21,55 @@ fn success() {
         0,
         None,
     );
+    show_unspent_colorings(&mut wallet, "after issue");
     let initial_supply = issue_amounts.iter().sum::<u64>();
-    let max_supply = initial_supply + inflation_rights.iter().sum::<u64>();
+    let total_inflatable = inflation_rights.iter().sum::<u64>();
+    let max_supply = initial_supply + total_inflatable;
     assert_eq!(asset.initial_supply, initial_supply);
     assert_eq!(asset.known_circulating_supply, initial_supply);
     assert_eq!(asset.max_supply, max_supply);
     let transfers = test_list_transfers(&wallet, Some(&asset.asset_id));
     assert_eq!(transfers.len(), 1);
     assert_eq!(transfers.first().unwrap().kind, TransferKind::Issuance);
+    let unspents: Vec<Unspent> = test_list_unspents(&mut wallet, None, false)
+        .into_iter()
+        .filter(|u| u.utxo.colorable)
+        .collect();
+    assert_eq!(unspents.len(), 5);
+    assert!(unspents.iter().all(|u| u.rgb_allocations.len() == 1));
 
     // inflate
+    test_create_utxos_default(&mut wallet, &online);
     let inflation_amounts = [199, 42];
+    let bak_info_before = wallet.database.get_backup_info().unwrap().unwrap();
     let res = test_inflate(&mut wallet, &online, &asset.asset_id, &inflation_amounts);
+    let bak_info_after = wallet.database.get_backup_info().unwrap().unwrap();
+    assert!(bak_info_after.last_operation_timestamp > bak_info_before.last_operation_timestamp);
+    show_unspent_colorings(&mut wallet, "after inflate");
     let total_inflated = inflation_amounts.iter().sum::<u64>();
+    let total_issued = initial_supply + total_inflated;
+    // check updated balance
+    let balance = test_get_asset_balance(&wallet, &asset.asset_id);
+    assert_eq!(
+        balance,
+        Balance {
+            settled: initial_supply,
+            future: total_issued,
+            spendable: initial_supply,
+        }
+    );
 
     mine(false, false);
 
     assert!(test_refresh_asset(&mut wallet, &online, &asset.asset_id));
+    show_unspent_colorings(&mut wallet, "after inflate mine + refresh");
 
     let transfers = test_list_transfers(&wallet, Some(&asset.asset_id));
     assert_eq!(transfers.len(), 3);
     let mut created_at = None;
     let mut updated_at = None;
-    let mut recipient_id = None;
-    let mut receive_utxo = None;
+    let mut recipient_id_set = HashSet::new();
+    let mut receive_utxo_set = HashSet::new();
     let mut change_utxo = None;
     let mut expiration = None;
     let mut inflation_rights_sorted = inflation_rights;
@@ -82,17 +104,9 @@ fn success() {
         assert_eq!(transfer.kind, TransferKind::Inflation);
         assert_eq!(transfer.txid.as_ref().unwrap(), &res.txid);
         assert!(transfer.recipient_id.is_some());
-        if recipient_id.is_none() {
-            recipient_id = transfer.recipient_id.clone();
-        } else {
-            assert_ne!(recipient_id, transfer.recipient_id)
-        }
+        recipient_id_set.insert(&transfer.recipient_id);
         assert!(transfer.receive_utxo.is_some());
-        if receive_utxo.is_none() {
-            receive_utxo = transfer.receive_utxo.clone();
-        } else {
-            assert_ne!(receive_utxo, transfer.receive_utxo)
-        }
+        receive_utxo_set.insert(&transfer.receive_utxo);
         assert!(transfer.change_utxo.is_some());
         if change_utxo.is_none() {
             change_utxo = transfer.change_utxo.clone();
@@ -109,8 +123,10 @@ fn success() {
         assert!(transfer.invoice_string.is_none());
         assert!(transfer.consignment_path.is_some());
     }
+    assert_eq!(recipient_id_set.len(), inflation_amounts.len());
+    assert_eq!(receive_utxo_set.len(), inflation_amounts.len());
 
-    let total_issued = initial_supply + total_inflated;
+    // check balance + remaining inflation rights
     let balance = test_get_asset_balance(&wallet, &asset.asset_id);
     assert_eq!(
         balance,
@@ -120,6 +136,16 @@ fn success() {
             spendable: total_issued,
         }
     );
+    let unspents = test_list_unspents(&mut wallet, Some(&online), false);
+    let inflation_allocations = unspents.iter().flat_map(|u| {
+        u.rgb_allocations
+            .iter()
+            .filter(|a| matches!(a.assignment, Assignment::InflationRight(_)))
+    });
+    let sum = inflation_allocations
+        .map(|a| a.assignment.inflation_amount())
+        .sum::<u64>();
+    assert_eq!(sum, total_inflatable - total_inflated);
 
     // send
     let receive_data = test_blind_receive(&rcv_wallet);
@@ -132,11 +158,9 @@ fn success() {
             transport_endpoints: TRANSPORT_ENDPOINTS.clone(),
         }],
     )]);
-    let bak_info_before = wallet.database.get_backup_info().unwrap().unwrap();
     let txid = test_send(&mut wallet, &online, &recipient_map);
-    let bak_info_after = wallet.database.get_backup_info().unwrap().unwrap();
-    assert!(bak_info_after.last_operation_timestamp > bak_info_before.last_operation_timestamp);
     assert!(!txid.is_empty());
+    show_unspent_colorings(&mut wallet, "after send");
     let (transfer, _, _) = get_test_transfer_sender(&wallet, &txid);
     let tte_data = wallet
         .database
@@ -147,8 +171,28 @@ fn success() {
     assert_eq!(ce.1.endpoint, PROXY_URL);
     assert!(ce.0.used);
 
+    // check balance (no assets left) + remaining inflation rights
+    let balance = test_get_asset_balance(&wallet, &asset.asset_id);
+    assert_eq!(
+        balance,
+        Balance {
+            settled: total_issued,
+            future: 0,
+            spendable: 0,
+        }
+    );
+    let unspents = test_list_unspents(&mut wallet, None, false);
+    let inflation_allocations = unspents.iter().flat_map(|u| {
+        u.rgb_allocations
+            .iter()
+            .filter(|a| matches!(a.assignment, Assignment::InflationRight(_)))
+    });
+    let sum = inflation_allocations
+        .map(|a: &RgbAllocation| a.assignment.inflation_amount())
+        .sum::<u64>();
+    assert_eq!(sum, total_inflatable - total_inflated);
+
     // transfers progress to status WaitingConfirmations after a refresh
-    std::thread::sleep(Duration::from_millis(1000)); // make sure updated_at will be at least +1s
     wait_for_refresh(&mut rcv_wallet, &rcv_online, None, None);
     let rcv_transfer = get_test_transfer_recipient(&rcv_wallet, &receive_data.recipient_id);
     let (rcv_transfer_data, _rcv_asset_transfer) =
@@ -185,12 +229,35 @@ fn success() {
         rcv_asset.known_circulating_supply,
         initial_supply + total_inflated
     );
+    show_unspent_colorings(&mut wallet, "after send refresh 1");
 
     // transfers progress to status Settled after tx mining + refresh
     mine(false, false);
     std::thread::sleep(Duration::from_millis(1000)); // make sure updated_at will be at least +1s
     wait_for_refresh(&mut rcv_wallet, &rcv_online, None, None);
     wait_for_refresh(&mut wallet, &online, Some(&asset.asset_id), None);
+    show_unspent_colorings(&mut wallet, "after send mine + refresh 2");
+
+    // check balance (no assets left) + remaining inflation rights
+    let balance = test_get_asset_balance(&wallet, &asset.asset_id);
+    assert_eq!(
+        balance,
+        Balance {
+            settled: 0,
+            future: 0,
+            spendable: 0,
+        }
+    );
+    let unspents = test_list_unspents(&mut wallet, None, false);
+    let inflation_allocations = unspents.iter().flat_map(|u| {
+        u.rgb_allocations
+            .iter()
+            .filter(|a| matches!(a.assignment, Assignment::InflationRight(_)))
+    });
+    let sum = inflation_allocations
+        .map(|a: &RgbAllocation| a.assignment.inflation_amount())
+        .sum::<u64>();
+    assert_eq!(sum, total_inflatable - total_inflated);
 
     let rcv_transfer = get_test_transfer_recipient(&rcv_wallet, &receive_data.recipient_id);
     let (rcv_transfer_data, _) = get_test_transfer_data(&rcv_wallet, &rcv_transfer);
@@ -207,6 +274,9 @@ fn success() {
         asset_metadata.known_circulating_supply,
         initial_supply + total_inflated
     );
+
+    // check there's no change (sent all)
+    assert!(transfer_data.change_utxo.is_none());
 }
 
 #[cfg(feature = "electrum")]
@@ -215,9 +285,148 @@ fn success() {
 fn fail() {
     initialize();
 
+    let max_inflation = 1000;
+
     let (mut wallet, online) = get_funded_wallet!();
 
-    // unsupported inflation
+    let asset_ifa =
+        test_issue_asset_ifa(&mut wallet, &online, None, Some(&[max_inflation]), 0, None);
+
+    // don't check inflate input params (checked in _begin/_end sections below)
+
+    // inflate errors
+    // - watch-only (_check_xprv)
+    let mut wallet_wo = get_test_wallet(false, None);
+    let online_wo = wallet_wo
+        .go_online(false, ELECTRUM_URL.to_string())
+        .unwrap();
+    let result = test_inflate_result(&mut wallet_wo, &online_wo, &asset_ifa.asset_id, &[1]);
+    assert_matches!(result, Err(Error::WatchOnly));
+
+    // - wrong online
+    let wrong_online = Online {
+        id: 1,
+        indexer_url: wallet.online_data.as_ref().unwrap().indexer_url.clone(),
+    };
+
+    // inflate_begin input params
+    // - check online is correct
+    let result = test_inflate_begin_result(&mut wallet, &wrong_online, &asset_ifa.asset_id, &[1]);
+    assert_matches!(result, Err(Error::CannotChangeOnline));
+    // - invalid asset_id
+    let result = test_inflate_begin_result(&mut wallet, &online, "malformed", &[]);
+    assert_matches!(result, Err(Error::AssetNotFound { asset_id: _ }));
+    // - check empty inflation_amounts
+    let result = test_inflate_begin_result(&mut wallet, &online, &asset_ifa.asset_id, &[]);
+    assert_matches!(result, Err(Error::NoInflationAmounts));
+    // - check inflation_amounts sum > u64 max
+    let result =
+        test_inflate_begin_result(&mut wallet, &online, &asset_ifa.asset_id, &[u64::MAX, 1]);
+    assert_matches!(result, Err(Error::TooHighInflationAmounts));
+    // - check inflation_amounts sum > max inflation
+    let result = test_inflate_begin_result(
+        &mut wallet,
+        &online,
+        &asset_ifa.asset_id,
+        &[max_inflation + 1],
+    );
+    assert_matches!(
+        result,
+        Err(Error::InsufficientAssignments {
+            asset_id: _,
+            available: _
+        })
+    );
+    // - check fee_rate
+    //   - low
+    let result = wallet.inflate_begin(
+        online.clone(),
+        asset_ifa.asset_id.clone(),
+        vec![1],
+        0,
+        MIN_CONFIRMATIONS,
+    );
+    assert_matches!(result, Err(Error::InvalidFeeRate { details: m }) if m == FEE_MSG_LOW);
+    //   - overflow
+    let result = wallet.inflate_begin(
+        online.clone(),
+        asset_ifa.asset_id.clone(),
+        vec![1],
+        u64::MAX,
+        MIN_CONFIRMATIONS,
+    );
+    assert_matches!(result, Err(Error::InvalidFeeRate { details: m }) if m == FEE_MSG_OVER);
+
+    // inflate_begin errors
+    // - inexistent asset
+    let result = test_inflate_begin_result(&mut wallet, &online, "rgb1nexistent", &[]);
+    assert_matches!(result, Err(Error::AssetNotFound { asset_id: _ }));
+    // - schema not supported
+    create_test_data_dir();
+    let bitcoin_network = BitcoinNetwork::Regtest;
+    let keys = generate_keys(bitcoin_network);
+    let mut wallet_nia = Wallet::new(WalletData {
+        data_dir: get_test_data_dir_string(),
+        bitcoin_network,
+        database_type: DatabaseType::Sqlite,
+        max_allocations_per_utxo: MAX_ALLOCATIONS_PER_UTXO,
+        account_xpub_colored: keys.account_xpub_colored.clone(),
+        account_xpub_vanilla: keys.account_xpub_vanilla.clone(),
+        mnemonic: Some(keys.mnemonic.clone()),
+        master_fingerprint: keys.master_fingerprint.clone(),
+        vanilla_keychain: None,
+        supported_schemas: vec![AssetSchema::Nia, AssetSchema::Ifa],
+    })
+    .unwrap();
+    let online_nia = wallet_nia
+        .go_online(true, ELECTRUM_URL.to_string())
+        .unwrap();
+    fund_wallet(wallet_nia.get_address().unwrap());
+    test_create_utxos_default(&mut wallet_nia, &online_nia);
+    let receive_data = test_blind_receive(&wallet_nia);
+    let recipient_map = HashMap::from([(
+        asset_ifa.asset_id.clone(),
+        vec![Recipient {
+            assignment: Assignment::Fungible(1),
+            recipient_id: receive_data.recipient_id.clone(),
+            witness_data: None,
+            transport_endpoints: TRANSPORT_ENDPOINTS.clone(),
+        }],
+    )]);
+    let txid = test_send(&mut wallet, &online, &recipient_map);
+    assert!(!txid.is_empty());
+    wait_for_refresh(&mut wallet_nia, &online_nia, None, None);
+    wait_for_refresh(&mut wallet, &online, None, None);
+    mine(false, false);
+    wait_for_refresh(&mut wallet_nia, &online_nia, None, None);
+    wait_for_refresh(&mut wallet, &online, None, None);
+    let transfer_recv = get_test_transfer_recipient(&wallet_nia, &receive_data.recipient_id);
+    let (transfer_send, _, _) = get_test_transfer_sender(&wallet, &txid);
+    let (transfer_data_recv, _) = get_test_transfer_data(&wallet_nia, &transfer_recv);
+    let (transfer_data_send, _) = get_test_transfer_data(&wallet, &transfer_send);
+    assert_eq!(transfer_data_recv.status, TransferStatus::Settled);
+    assert_eq!(transfer_data_send.status, TransferStatus::Settled);
+    drop(wallet_nia);
+    drop(online_nia);
+    let mut wallet_nia = Wallet::new(WalletData {
+        data_dir: get_test_data_dir_string(),
+        bitcoin_network,
+        database_type: DatabaseType::Sqlite,
+        max_allocations_per_utxo: MAX_ALLOCATIONS_PER_UTXO,
+        account_xpub_colored: keys.account_xpub_colored.clone(),
+        account_xpub_vanilla: keys.account_xpub_vanilla.clone(),
+        mnemonic: Some(keys.mnemonic.clone()),
+        master_fingerprint: keys.master_fingerprint.clone(),
+        vanilla_keychain: None,
+        supported_schemas: vec![AssetSchema::Nia],
+    })
+    .unwrap();
+    let online_nia = wallet_nia
+        .go_online(true, ELECTRUM_URL.to_string())
+        .unwrap();
+    let result = test_inflate_begin_result(&mut wallet_nia, &online_nia, &asset_ifa.asset_id, &[1]);
+    assert_matches!(result, Err(Error::UnsupportedSchema { asset_schema: _ }));
+    // - inflation not supported
     let asset_nia = test_issue_asset_nia(&mut wallet, &online, None);
     let asset_cfa = test_issue_asset_cfa(&mut wallet, &online, None, None);
     let asset_uda = test_issue_asset_uda(&mut wallet, &online, None, None, vec![]);
@@ -228,13 +437,40 @@ fn fail() {
     ];
     for (asset_id, schema) in unsupported_asset_ids {
         let inflation_amounts = vec![200, 42];
-        let result = wallet.inflate(
-            online.clone(),
-            asset_id,
-            inflation_amounts,
-            FEE_RATE,
-            MIN_CONFIRMATIONS,
-        );
+        let result = test_inflate_result(&mut wallet, &online, &asset_id, &inflation_amounts);
         assert_matches!(result, Err(Error::UnsupportedInflation { asset_schema }) if asset_schema == schema);
     }
+    // - inflation amounts (none, zero)
+    let result = test_inflate_begin_result(&mut wallet, &online, &asset_ifa.asset_id, &[]);
+    assert_matches!(result, Err(Error::NoInflationAmounts));
+    let result = test_inflate_begin_result(&mut wallet, &online, &asset_ifa.asset_id, &[1, 0, 2]);
+    assert_matches!(result, Err(Error::InvalidAmountZero));
+
+    // inflate_end input params
+    let address = test_get_address(&mut wallet);
+    let unsigned_psbt = wallet
+        .send_btc_begin(online.clone(), address, 1000, FEE_RATE, false)
+        .unwrap();
+    let signed_psbt = wallet.sign_psbt(unsigned_psbt, None).unwrap();
+    // - check online is correct
+    let result = test_inflate_end_result(&mut wallet, &wrong_online, &signed_psbt);
+    assert_matches!(result, Err(Error::CannotChangeOnline));
+    // - check signed_psbt is valid
+    let result = test_inflate_end_result(&mut wallet, &online, "");
+    assert_matches!(result, Err(Error::InvalidPsbt { details: _ }));
+
+    // inflate_end errors
+    // - no prior inflate_begin
+    test_create_utxos(&mut wallet, &online, false, Some(1), None, FEE_RATE);
+    let unsigned_psbt = test_inflate_begin(&mut wallet, &online, &asset_ifa.asset_id, &[1]);
+    let signed_psbt = wallet.sign_psbt(unsigned_psbt, None).unwrap();
+    let psbt_txid = Psbt::from_str(&signed_psbt)
+        .unwrap()
+        .extract_tx()
+        .unwrap()
+        .compute_txid()
+        .to_string();
+    let (mut wallet_2, online_2) = get_empty_wallet!();
+    let result = test_inflate_end_result(&mut wallet_2, &online_2, &signed_psbt);
+    assert_matches!(result, Err(Error::UnknownTransfer { txid }) if txid == psbt_txid);
 }
