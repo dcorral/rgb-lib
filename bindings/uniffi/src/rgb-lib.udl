@@ -198,6 +198,7 @@ dictionary BtcBalance {
 enum BitcoinNetwork {
   "Mainnet",
   "Testnet",
+  "Testnet4",
   "Signet",
   "Regtest",
 };

@@ -113,6 +113,21 @@ fn testnet_success() {
     assert_eq!(wallet.wallet_data.bitcoin_network, bitcoin_network);
 }
 
+#[cfg(feature = "electrum")]
+#[test]
+#[parallel]
+fn testnet4_success() {
+    create_test_data_dir();
+
+    let bitcoin_network = BitcoinNetwork::Testnet4;
+    let mut wallet = get_test_wallet_with_net(true, None, bitcoin_network);
+    check_wallet(&wallet, bitcoin_network, None);
+    let indexer_url = "ssl://electrum.iriswallet.com:50053";
+    test_go_online(&mut wallet, false, Some(indexer_url));
+    assert!(!wallet.watch_only);
+    assert_eq!(wallet.wallet_data.bitcoin_network, bitcoin_network);
+}
+
 #[cfg(all(feature = "electrum", feature = "esplora"))]
 #[test]
 #[parallel]

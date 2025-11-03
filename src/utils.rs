@@ -41,8 +41,10 @@ const PROXY_PROTOCOL_VERSION: &str = "0.2";
 pub enum BitcoinNetwork {
     /// Bitcoin's mainnet
     Mainnet,
-    /// Bitcoin's testnet
+    /// Bitcoin's testnet3
     Testnet,
+    /// Bitcoin's testnet4
+    Testnet4,
     /// Bitcoin's signet
     Signet,
     /// Bitcoin's regtest
@@ -62,6 +64,7 @@ impl FromStr for BitcoinNetwork {
         Ok(match s.to_lowercase().as_str() {
             "mainnet" | "bitcoin" => BitcoinNetwork::Mainnet,
             "testnet" | "testnet3" => BitcoinNetwork::Testnet,
+            "testnet4" => BitcoinNetwork::Testnet4,
             "regtest" => BitcoinNetwork::Regtest,
             "signet" => BitcoinNetwork::Signet,
             _ => {
@@ -73,18 +76,6 @@ impl FromStr for BitcoinNetwork {
     }
 }
 
-impl From<BdkNetwork> for BitcoinNetwork {
-    fn from(x: BdkNetwork) -> BitcoinNetwork {
-        match x {
-            BdkNetwork::Bitcoin => BitcoinNetwork::Mainnet,
-            BdkNetwork::Testnet => BitcoinNetwork::Testnet,
-            BdkNetwork::Signet => BitcoinNetwork::Signet,
-            BdkNetwork::Regtest => BitcoinNetwork::Regtest,
-            _ => unimplemented!("this should not be possible"),
-        }
-    }
-}
-
 impl TryFrom<ChainNet> for BitcoinNetwork {
     type Error = Error;
 
@@ -92,6 +83,7 @@ impl TryFrom<ChainNet> for BitcoinNetwork {
         match x {
             ChainNet::BitcoinMainnet => Ok(BitcoinNetwork::Mainnet),
             ChainNet::BitcoinTestnet3 => Ok(BitcoinNetwork::Testnet),
+            ChainNet::BitcoinTestnet4 => Ok(BitcoinNetwork::Testnet4),
             ChainNet::BitcoinSignet => Ok(BitcoinNetwork::Signet),
             ChainNet::BitcoinRegtest => Ok(BitcoinNetwork::Regtest),
             _ => Err(Error::UnsupportedLayer1 {
@@ -106,6 +98,7 @@ impl From<BitcoinNetwork> for bitcoin::Network {
         match x {
             BitcoinNetwork::Mainnet => bitcoin::Network::Bitcoin,
             BitcoinNetwork::Testnet => bitcoin::Network::Testnet,
+            BitcoinNetwork::Testnet4 => bitcoin::Network::Testnet4,
             BitcoinNetwork::Signet => bitcoin::Network::Signet,
             BitcoinNetwork::Regtest => bitcoin::Network::Regtest,
         }
@@ -126,6 +119,7 @@ impl From<BitcoinNetwork> for ChainNet {
         match x {
             BitcoinNetwork::Mainnet => ChainNet::BitcoinMainnet,
             BitcoinNetwork::Testnet => ChainNet::BitcoinTestnet3,
+            BitcoinNetwork::Testnet4 => ChainNet::BitcoinTestnet4,
             BitcoinNetwork::Signet => ChainNet::BitcoinSignet,
             BitcoinNetwork::Regtest => ChainNet::BitcoinRegtest,
         }
@@ -137,6 +131,7 @@ impl From<BitcoinNetwork> for RgbNetwork {
         match x {
             BitcoinNetwork::Mainnet => RgbNetwork::Mainnet,
             BitcoinNetwork::Testnet => RgbNetwork::Testnet3,
+            BitcoinNetwork::Testnet4 => RgbNetwork::Testnet4,
             BitcoinNetwork::Signet => RgbNetwork::Signet,
             BitcoinNetwork::Regtest => RgbNetwork::Regtest,
         }
@@ -252,6 +247,9 @@ pub(crate) fn get_genesis_hash(bitcoin_network: &BitcoinNetwork) -> &str {
         BitcoinNetwork::Testnet => {
             "000000000933ea01ad0ee984209779baaec3ced90fa3f408719526f8d77f4943"
         }
+        BitcoinNetwork::Testnet4 => {
+            "00000000da84f2bafbbc53dee25a72ae507ff4914b867c565be350b0da8bf043"
+        }
         BitcoinNetwork::Signet => {
             "00000008819873e925422c1ff0f99f7cc9bbb232af63a077a480a3633bee1ef6"
         }
@@ -269,6 +267,9 @@ fn get_valid_txid_for_network(bitcoin_network: &BitcoinNetwork) -> String {
         }
         BitcoinNetwork::Testnet => {
             "5e6560fd518aadbed67ee4a55bdc09f19e619544f5511e9343ebba66d2f62653"
+        }
+        BitcoinNetwork::Testnet4 => {
+            "7aa0a7ae1e223414cb807e40cd57e667b718e42aaf9306db9102fe28912b7b4e"
         }
         BitcoinNetwork::Signet => {
             "8153034f45e695453250a8fb7225a5e545144071d8ed7b0d3211efa1f3c92ad8"
