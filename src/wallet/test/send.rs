@@ -4751,12 +4751,12 @@ fn _min_confirmations_common(
     wait_for_refresh(wallet, online, None, None);
     wait_for_refresh(rcv_wallet, rcv_online, Some(&asset.asset_id), None);
 
-    let transfer = get_test_transfer_recipient(rcv_wallet, &receive_data.recipient_id);
-    let (transfer_data, _) = get_test_transfer_data(rcv_wallet, &transfer);
-    let (rcv_transfer, _, _) = get_test_transfer_sender(wallet, &txid);
+    let rcv_transfer = get_test_transfer_recipient(wallet, &receive_data.recipient_id);
     let (rcv_transfer_data, _) = get_test_transfer_data(wallet, &rcv_transfer);
-    assert_eq!(transfer_data.status, TransferStatus::Settled);
+    let (transfer, _, _) = get_test_transfer_sender(rcv_wallet, &txid);
+    let (transfer_data, _) = get_test_transfer_data(rcv_wallet, &transfer);
     assert_eq!(rcv_transfer_data.status, TransferStatus::Settled);
+    assert_eq!(transfer_data.status, TransferStatus::Settled);
 }
 
 #[cfg(feature = "electrum")]
