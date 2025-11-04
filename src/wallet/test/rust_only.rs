@@ -14,15 +14,15 @@ fn success() {
     let (mut wallet_recv, _online_recv) = get_empty_wallet!();
 
     // create 1 UTXO and drain the rest
-    let num_created = test_create_utxos(
+    test_create_utxos(
         &mut wallet_send,
         &online_send,
         false,
         Some(1),
         None,
         FEE_RATE,
+        None,
     );
-    assert_eq!(num_created, 1);
     test_drain_to_keep(
         &mut wallet_send,
         &online_send,
@@ -307,7 +307,7 @@ fn save_new_asset_success() {
         Some(file_str),
         vec![&image_str, file_str],
     );
-    test_create_utxos(&mut wallet, &online, false, None, None, FEE_RATE);
+    test_create_utxos(&mut wallet, &online, false, None, None, FEE_RATE, None);
     test_save_new_asset(
         &mut wallet,
         &online,
@@ -348,15 +348,15 @@ fn color_psbt_fail() {
     let (mut wallet_recv, _online_recv) = get_empty_wallet!();
 
     // create 1 UTXO and drain the rest
-    let num_created = test_create_utxos(
+    test_create_utxos(
         &mut wallet_send,
         &online_send,
         false,
         Some(1),
         None,
         FEE_RATE,
+        None,
     );
-    assert_eq!(num_created, 1);
     test_drain_to_keep(
         &mut wallet_send,
         &online_send,

@@ -64,7 +64,7 @@ impl Miner {
             if output.status.success() {
                 true
             } else if !output.status.success()
-                && String::from_utf8(output.stderr.clone())
+                && str::from_utf8(&output.stderr)
                     .unwrap()
                     .contains(QUEUE_DEPTH_EXCEEDED)
             {
@@ -178,7 +178,7 @@ pub(crate) fn estimate_smart_fee(esplora: bool) -> bool {
             json_output = serde_json::from_str(&output_str).unwrap();
             true
         } else if !output.status.success()
-            && String::from_utf8(output.stderr.clone())
+            && str::from_utf8(&output.stderr)
                 .unwrap()
                 .contains(QUEUE_DEPTH_EXCEEDED)
         {
@@ -200,7 +200,6 @@ pub(crate) fn wait_indexers_sync() {
     let t_0 = OffsetDateTime::now_utc();
     let mut max_blockcount = 0;
     for bitcoin_cli in [bitcoin_cli(), _esplora_bitcoin_cli()] {
-        let t_0 = OffsetDateTime::now_utc();
         let output = loop {
             if (OffsetDateTime::now_utc() - t_0).as_seconds_f32() > 120.0 {
                 panic!("could not get blockcount ({QUEUE_DEPTH_EXCEEDED})");
@@ -213,7 +212,7 @@ pub(crate) fn wait_indexers_sync() {
                 .output()
                 .expect("failed to call getblockcount");
             if !output.status.success()
-                && String::from_utf8(output.stderr.clone())
+                && str::from_utf8(&output.stderr)
                     .unwrap()
                     .contains(QUEUE_DEPTH_EXCEEDED)
             {
@@ -243,7 +242,7 @@ pub(crate) fn wait_indexers_sync() {
         indexer_urls.push(ESPLORA_URL);
 
         for indexer_url in indexer_urls {
-            let indexer = build_indexer(indexer_url).expect("cannot get indexer {indexer}");
+            let indexer = build_indexer(indexer_url).expect("cannot get indexer {indexer_url}");
             if indexer.block_hash(max_blockcount as usize).is_err() {
                 all_synced = false;
             }

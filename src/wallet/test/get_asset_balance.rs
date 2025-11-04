@@ -55,26 +55,26 @@ fn transfer_balances() {
 
     // sender wallet with 3 UTXOs (both assets issued to the same UTXOs)
     let (mut wallet_send, online_send) = get_funded_noutxo_wallet!();
-    let num_created = test_create_utxos(
+    test_create_utxos(
         &mut wallet_send,
         &online_send,
         true,
         Some(3),
         None,
         FEE_RATE,
+        None,
     );
-    assert_eq!(num_created, 3);
     // recipient wallet with a single UTXO
     let (mut wallet_recv, online_recv) = get_funded_noutxo_wallet!();
-    let num_created = test_create_utxos(
+    test_create_utxos(
         &mut wallet_recv,
         &online_recv,
         true,
         Some(1),
         None,
         FEE_RATE,
+        None,
     );
-    assert_eq!(num_created, 1);
 
     // issue
     let asset_1 = test_issue_asset_nia(
@@ -90,15 +90,15 @@ fn transfer_balances() {
     );
 
     // create 2 more UTXOs on the sender wallet
-    let num_created = test_create_utxos(
+    test_create_utxos(
         &mut wallet_send,
         &online_send,
         false,
         Some(2),
         None,
         FEE_RATE,
+        None,
     );
-    assert_eq!(num_created, 2);
 
     // balances after issuance
     show_unspent_colorings(&mut wallet_send, "send after issuance");

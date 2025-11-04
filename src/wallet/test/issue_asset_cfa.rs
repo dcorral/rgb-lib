@@ -12,8 +12,15 @@ fn success() {
     let (mut wallet, online) = get_funded_noutxo_wallet!();
 
     // prepare UTXOs
-    let num_created = test_create_utxos(&mut wallet, &online, true, Some(2), Some(5000), FEE_RATE);
-    assert_eq!(num_created, 2);
+    test_create_utxos(
+        &mut wallet,
+        &online,
+        true,
+        Some(2),
+        Some(5000),
+        FEE_RATE,
+        None,
+    );
 
     // required fields only
     println!("\nasset 1");
@@ -195,8 +202,15 @@ fn no_issue_on_pending_send() {
     let (mut rcv_wallet, rcv_online) = get_empty_wallet!();
 
     // prepare UTXO
-    let num_created = test_create_utxos(&mut wallet, &online, true, Some(1), Some(5000), FEE_RATE);
-    assert_eq!(num_created, 1);
+    test_create_utxos(
+        &mut wallet,
+        &online,
+        true,
+        Some(1),
+        Some(5000),
+        FEE_RATE,
+        None,
+    );
 
     // issue 1st asset
     let asset_1 = test_issue_asset_cfa(&mut wallet, &online, None, None);
@@ -232,8 +246,7 @@ fn no_issue_on_pending_send() {
     assert!(matches!(result, Err(Error::InsufficientAllocationSlots)));
 
     // create 1 more UTXO issue 2nd asset
-    let num_created = test_create_utxos(&mut wallet, &online, false, Some(1), None, FEE_RATE);
-    assert_eq!(num_created, 1);
+    test_create_utxos(&mut wallet, &online, false, Some(1), None, FEE_RATE, None);
     let asset_2 = test_issue_asset_cfa(&mut wallet, &online, Some(&[AMOUNT * 2]), None);
     show_unspent_colorings(&mut wallet, "after 2nd issuance");
     // get 2nd issuance UTXO

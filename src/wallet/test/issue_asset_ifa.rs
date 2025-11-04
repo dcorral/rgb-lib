@@ -9,8 +9,7 @@ fn success() {
     let (mut wallet, online) = get_funded_wallet!();
 
     // create more UTXOs to host all issued allocations
-    let num_created = test_create_utxos(&mut wallet, &online, true, Some(9), None, FEE_RATE);
-    assert_eq!(num_created, 4);
+    test_create_utxos(&mut wallet, &online, true, Some(9), None, FEE_RATE, Some(4));
 
     let before_timestamp = now().unix_timestamp();
     let bak_info_before = wallet.database.get_backup_info().unwrap().unwrap();
@@ -131,7 +130,7 @@ fn multi_success() {
     let (mut wallet, online) = get_funded_wallet!();
 
     // create more UTXOs
-    let _ = test_create_utxos_default(&mut wallet, &online);
+    test_create_utxos_default(&mut wallet, &online);
 
     let asset = test_issue_asset_ifa(&mut wallet, &online, Some(&amounts), None, 0, None);
 
@@ -180,8 +179,15 @@ fn no_issue_on_pending_send() {
     let (mut rcv_wallet, rcv_online) = get_empty_wallet!();
 
     // prepare UTXOs
-    let num_created = test_create_utxos(&mut wallet, &online, true, Some(3), Some(5000), FEE_RATE);
-    assert_eq!(num_created, 3);
+    test_create_utxos(
+        &mut wallet,
+        &online,
+        true,
+        Some(3),
+        Some(5000),
+        FEE_RATE,
+        None,
+    );
 
     // issue 1st asset
     let asset_1 = test_issue_asset_ifa(&mut wallet, &online, None, None, 1, None);
@@ -276,8 +282,7 @@ fn no_issue_on_pending_send() {
     assert_matches!(result, Err(Error::InsufficientAllocationSlots));
 
     // create 1 more UTXO + issue 2nd asset
-    let num_created = test_create_utxos(&mut wallet, &online, false, Some(1), None, FEE_RATE);
-    assert_eq!(num_created, 1);
+    test_create_utxos(&mut wallet, &online, false, Some(1), None, FEE_RATE, None);
     let asset_2 = test_issue_asset_ifa(
         &mut wallet,
         &online,

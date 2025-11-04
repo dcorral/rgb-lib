@@ -194,10 +194,11 @@ pub(crate) fn check_test_transfer_status_recipient(
     expected_status: TransferStatus,
 ) -> bool {
     let transfers = wallet.database.iter_transfers().unwrap();
-    let transfer = transfers
+    let mut recipient_transfers = transfers
         .iter()
-        .find(|t| t.recipient_id == Some(recipient_id.to_string()))
-        .unwrap();
+        .filter(|t| t.recipient_id.as_deref() == Some(recipient_id));
+    let transfer = recipient_transfers.next().unwrap();
+    assert!(recipient_transfers.next().is_none());
     let (transfer_data, _) = get_test_transfer_data(wallet, transfer);
     println!(
         "receive with recipient_id {} is in status {:?}",
@@ -299,24 +300,24 @@ pub(crate) fn get_test_asset_transfers(
         .collect()
 }
 
-pub(crate) fn get_test_transfers(wallet: &Wallet, asset_transfer_idx: i32) -> Vec<DbTransfer> {
+pub(crate) fn get_test_transfers(
+    wallet: &Wallet,
+    asset_transfer_idx: i32,
+) -> impl Iterator<Item = DbTransfer> {
     wallet
         .database
         .iter_transfers()
         .unwrap()
         .into_iter()
-        .filter(|t| t.asset_transfer_idx == asset_transfer_idx)
-        .collect()
+        .filter(move |t| t.asset_transfer_idx == asset_transfer_idx)
 }
 
 pub(crate) fn get_test_asset_transfer(wallet: &Wallet, batch_transfer_idx: i32) -> DbAssetTransfer {
     let asset_transfers = get_test_asset_transfers(wallet, batch_transfer_idx);
-    let user_driven_transfers = asset_transfers
-        .into_iter()
-        .filter(|t| t.user_driven)
-        .collect::<Vec<_>>();
-    assert_eq!(user_driven_transfers.len(), 1);
-    user_driven_transfers.first().unwrap().clone()
+    let mut user_driven_transfers = asset_transfers.into_iter().filter(|t| t.user_driven);
+    let user_driven_transfer = user_driven_transfers.next().unwrap();
+    assert!(user_driven_transfers.next().is_none());
+    user_driven_transfer
 }
 
 pub(crate) fn get_test_colorings(wallet: &Wallet, asset_transfer_idx: i32) -> Vec<DbColoring> {
@@ -330,15 +331,15 @@ pub(crate) fn get_test_colorings(wallet: &Wallet, asset_transfer_idx: i32) -> Ve
 }
 
 pub(crate) fn get_test_transfer_recipient(wallet: &Wallet, recipient_id: &str) -> DbTransfer {
-    let transfers = wallet
+    let mut transfers = wallet
         .database
         .iter_transfers()
         .unwrap()
         .into_iter()
-        .filter(|t| t.recipient_id == Some(recipient_id.to_string()) && t.incoming)
-        .collect::<Vec<_>>();
-    assert_eq!(transfers.len(), 1);
-    transfers.first().cloned().unwrap()
+        .filter(|t| t.recipient_id == Some(recipient_id.to_string()) && t.incoming);
+    let transfer = transfers.next().unwrap();
+    assert!(transfers.next().is_none());
+    transfer
 }
 
 pub(crate) fn get_test_transfer_sender(
@@ -347,12 +348,12 @@ pub(crate) fn get_test_transfer_sender(
 ) -> (DbTransfer, DbAssetTransfer, DbBatchTransfer) {
     let batch_transfers = get_test_batch_transfers(wallet, txid);
     assert_eq!(batch_transfers.len(), 1);
-    let batch_transfer = batch_transfers.first().unwrap();
+    let batch_transfer = batch_transfers.into_iter().next().unwrap();
     let asset_transfer = get_test_asset_transfer(wallet, batch_transfer.idx);
-    let transfers = get_test_transfers(wallet, asset_transfer.idx);
-    assert_eq!(transfers.len(), 1);
-    let transfer = transfers.first().unwrap();
-    (transfer.clone(), asset_transfer, batch_transfer.clone())
+    let mut transfers = get_test_transfers(wallet, asset_transfer.idx);
+    let transfer = transfers.next().unwrap();
+    assert!(transfers.next().is_none());
+    (transfer, asset_transfer, batch_transfer)
 }
 
 pub(crate) fn get_test_transfers_sender(
@@ -365,15 +366,15 @@ pub(crate) fn get_test_transfers_sender(
 ) {
     let batch_transfers = get_test_batch_transfers(wallet, txid);
     assert_eq!(batch_transfers.len(), 1);
-    let batch_transfer = batch_transfers.first().unwrap();
+    let batch_transfer = batch_transfers.into_iter().next().unwrap();
     let asset_transfers = get_test_asset_transfers(wallet, batch_transfer.idx);
     let mut transfers: HashMap<String, Vec<DbTransfer>> = HashMap::new();
-    for asset_transfer in asset_transfers.clone() {
-        let asset_id = asset_transfer.asset_id.unwrap();
+    for asset_transfer in &asset_transfers {
+        let asset_id = asset_transfer.asset_id.clone().unwrap();
         let transfers_for_asset = get_test_transfers(wallet, asset_transfer.idx);
-        transfers.insert(asset_id, transfers_for_asset);
+        transfers.insert(asset_id, transfers_for_asset.collect());
     }
-    (transfers.clone(), asset_transfers, batch_transfer.clone())
+    (transfers, asset_transfers, batch_transfer)
 }
 
 pub(crate) fn get_test_transfer_data(
@@ -517,24 +518,48 @@ pub(crate) fn wait_for_refresh(
         target_set = t_ids.iter().copied().collect();
     }
     let check = || {
-        let refresh_res = test_refresh_result(wallet, online, asset_id, &[]).unwrap();
-        refresh_res.iter().for_each(|(i, rt)| {
-            if let Some(ref e) = rt.failure {
-                panic!("refresh of {i} failed: {e}");
-            }
-        });
-        if transfer_ids.is_some() {
-            for (id, rt) in refresh_res {
-                if rt.updated_status.is_some() && target_set.contains(&id) {
-                    seen.insert(id);
+        let result = test_refresh_result(wallet, online, asset_id, &[]);
+        if let Ok(refresh_res) = result {
+            let mut non_fatal_error = false;
+            refresh_res.iter().for_each(|(i, rt)| {
+                if let Some(ref e) = rt.failure {
+                    eprintln!("refresh of {i} failure: {e} ({e:?})");
+                    match e {
+                        Error::Internal { details } => {
+                            println!("refresh of {i} internal error: {e}, details: {details}");
+                            non_fatal_error = true;
+                        }
+                        Error::InvalidTxid => {
+                            println!("refresh of {i} invalid TXID: {e}");
+                            non_fatal_error = true;
+                        }
+                        Error::Network { details } => {
+                            println!("refresh of {i} network error: {e}, details: {details}");
+                            non_fatal_error = true;
+                        }
+                        _ => panic!("refresh of {i} fatal error: {e}"),
+                    }
                 }
+            });
+            if non_fatal_error {
+                return false;
             }
-            if seen == target_set {
+            if transfer_ids.is_some() {
+                for (id, rt) in refresh_res {
+                    if rt.updated_status.is_some() && target_set.contains(&id) {
+                        seen.insert(id);
+                    }
+                }
+                if seen == target_set {
+                    return true;
+                }
+            } else if refresh_res.transfers_changed() {
                 return true;
             }
-        } else if refresh_res.transfers_changed() {
-            return true;
-        }
+        } else {
+            eprintln!("refresh error: {result:?}");
+            return false;
+        };
         false
     };
     if !wait_for_function(check, 10, 500) {
@@ -600,15 +625,11 @@ pub(crate) fn extract_opouts_from_transfer(
     }
     let txo_indices = colorings.iter().map(|c| c.txo_idx).collect::<Vec<_>>();
     let db_txos = wallet.database.iter_txos().unwrap();
-    let relevant_txos = db_txos
-        .into_iter()
-        .filter(|t| txo_indices.contains(&t.idx))
-        .collect::<Vec<_>>();
-    let rgb_outpoints: Vec<RgbOutpoint> = relevant_txos
-        .iter()
+    let relevant_txos = db_txos.into_iter().filter(|t| txo_indices.contains(&t.idx));
+    let mut rgb_outpoints = relevant_txos
         .map(|txo| RgbOutpoint::from(txo.clone()))
-        .collect();
-    if rgb_outpoints.is_empty() {
+        .peekable();
+    if rgb_outpoints.peek().is_none() {
         panic!("cannot find outpoints for this transfer");
     }
     let contract_id = ContractId::from_str(asset_id).unwrap();
@@ -642,26 +663,21 @@ pub(crate) fn write_opouts_to_reject_list(filename: &str, opouts: &[String]) {
 /// type, amount and asset
 pub(crate) fn show_unspent_colorings(wallet: &mut Wallet, msg: &str) {
     println!("\n{msg}");
-    let unspents: Vec<Unspent> = test_list_unspents(wallet, None, false)
+    let unspents = test_list_unspents(wallet, None, false)
         .into_iter()
-        .filter(|u| u.utxo.colorable)
-        .collect();
+        .filter(|u| u.utxo.colorable);
+    let db_txos = wallet.database.iter_txos().unwrap();
+    let db_colorings = wallet.database.iter_colorings().unwrap();
+    let db_asset_transfers = wallet.database.iter_asset_transfers().unwrap();
+    let db_batch_transfers = wallet.database.iter_batch_transfers().unwrap();
+    let pending_blind_transfers = get_pending_blind_transfers(wallet);
     for unspent in unspents {
         let outpoint = unspent.utxo.outpoint;
-        let db_txos = wallet.database.iter_txos().unwrap();
         let db_txo = db_txos
             .iter()
             .find(|t| t.txid == outpoint.txid && t.vout == outpoint.vout)
             .unwrap();
-        let db_colorings: Vec<DbColoring> = wallet
-            .database
-            .iter_colorings()
-            .unwrap()
-            .into_iter()
-            .filter(|c| c.txo_idx == db_txo.idx)
-            .collect();
-        let pending_blind_transfers = get_pending_blind_transfers(wallet);
-        let pending_blind_transfers = pending_blind_transfers.iter().filter(|t| {
+        let txo_pending_blind_transfers = pending_blind_transfers.iter().filter(|t| {
             if let Some(txo) = &t.receive_utxo {
                 db_txo.outpoint() == *txo
             } else {
@@ -679,13 +695,12 @@ pub(crate) fn show_unspent_colorings(wallet: &mut Wallet, msg: &str) {
                 ""
             },
         );
-        for db_coloring in db_colorings {
-            let db_asset_transfers = wallet.database.iter_asset_transfers().unwrap();
+        let txo_db_colorings = db_colorings.iter().filter(|c| c.txo_idx == db_txo.idx);
+        for db_coloring in txo_db_colorings {
             let db_asset_transfer = db_asset_transfers
                 .iter()
                 .find(|a| a.idx == db_coloring.asset_transfer_idx)
                 .unwrap();
-            let db_batch_transfers = wallet.database.iter_batch_transfers().unwrap();
             let db_batch_transfer = db_batch_transfers
                 .iter()
                 .find(|b| b.idx == db_asset_transfer.batch_transfer_idx)
@@ -698,7 +713,7 @@ pub(crate) fn show_unspent_colorings(wallet: &mut Wallet, msg: &str) {
                 db_asset_transfer.asset_id.as_ref(),
             );
         }
-        for pbt in pending_blind_transfers {
+        for pbt in txo_pending_blind_transfers {
             println!("\t- pending blind receive with transfer ID {}", pbt.idx);
         }
     }

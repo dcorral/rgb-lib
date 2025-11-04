@@ -461,7 +461,7 @@ fn fail() {
 
     // inflate_end errors
     // - no prior inflate_begin
-    test_create_utxos(&mut wallet, &online, false, Some(1), None, FEE_RATE);
+    test_create_utxos(&mut wallet, &online, false, Some(1), None, FEE_RATE, None);
     let unsigned_psbt = test_inflate_begin(&mut wallet, &online, &asset_ifa.asset_id, &[1]);
     let signed_psbt = wallet.sign_psbt(unsigned_psbt, None).unwrap();
     let psbt_txid = Psbt::from_str(&signed_psbt)

@@ -27,12 +27,42 @@ pub(crate) fn test_witness_receive(wallet: &mut Wallet) -> ReceiveData {
 }
 
 #[cfg(any(feature = "electrum", feature = "esplora"))]
-pub(crate) fn test_create_utxos_default(wallet: &mut Wallet, online: &Online) -> u8 {
-    test_create_utxos(wallet, online, false, None, None, FEE_RATE)
+pub(crate) fn test_create_utxos_default(wallet: &mut Wallet, online: &Online) {
+    test_create_utxos(wallet, online, false, None, None, FEE_RATE, None);
 }
 
 #[cfg(any(feature = "electrum", feature = "esplora"))]
 pub(crate) fn test_create_utxos(
+    wallet: &mut Wallet,
+    online: &Online,
+    up_to: bool,
+    num: Option<u8>,
+    size: Option<u32>,
+    fee_rate: u64,
+    expected: Option<u8>,
+) {
+    let unspents = test_list_unspents(wallet, Some(online), false);
+    let colorable_before = unspents.iter().filter(|u| u.utxo.colorable).count();
+    let expected = expected.unwrap_or(num.unwrap_or(UTXO_NUM));
+    let _ = test_create_utxos_nowait(wallet, online, up_to, num, size, fee_rate);
+    let check = || {
+        let unspents = test_list_unspents(wallet, Some(online), false);
+        let colorable = unspents.iter().filter(|u| u.utxo.colorable).count();
+        if (colorable - colorable_before) == expected as usize {
+            return true;
+        }
+        false
+    };
+    if !wait_for_function(check, 10, 500) {
+        panic!(
+            "created utxo number ({}) didn't match the expected one ({expected})",
+            num.unwrap_or(UTXO_NUM)
+        );
+    }
+}
+
+#[cfg(any(feature = "electrum", feature = "esplora"))]
+pub(crate) fn test_create_utxos_nowait(
     wallet: &mut Wallet,
     online: &Online,
     up_to: bool,
@@ -529,9 +559,21 @@ pub(crate) fn test_send(
     online: &Online,
     recipient_map: &HashMap<String, Vec<Recipient>>,
 ) -> String {
-    test_send_result(wallet, online, recipient_map)
-        .unwrap()
-        .txid
+    let start = Instant::now();
+    let timeout = Duration::from_secs(10);
+    loop {
+        if start.elapsed() > timeout {
+            panic!("send failed")
+        }
+        let result = test_send_result(wallet, online, recipient_map);
+        if let Err(e) = result {
+            println!("send error: {e}");
+            std::thread::sleep(Duration::from_millis(500));
+            wallet.sync(online.clone()).unwrap();
+            continue;
+        }
+        break result.unwrap().txid;
+    }
 }
 
 #[cfg(any(feature = "electrum", feature = "esplora"))]

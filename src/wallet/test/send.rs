@@ -368,7 +368,7 @@ fn spend_all() {
     // wallets
     let (mut wallet, online) = get_funded_noutxo_wallet!();
     let (mut rcv_wallet, rcv_online) = get_funded_wallet!();
-    test_create_utxos(&mut wallet, &online, false, Some(1), None, FEE_RATE);
+    test_create_utxos(&mut wallet, &online, false, Some(1), None, FEE_RATE, None);
 
     // issue
     let asset = test_issue_asset_nia(&mut wallet, &online, None);
@@ -398,7 +398,7 @@ fn spend_all() {
     assert!(allocation_asset_ids.contains(&asset_extra.asset_id));
 
     // send
-    test_create_utxos(&mut wallet, &online, false, Some(1), None, FEE_RATE);
+    test_create_utxos(&mut wallet, &online, false, Some(1), None, FEE_RATE, None);
     let receive_data = test_blind_receive(&rcv_wallet);
     let recipient_map = HashMap::from([(
         asset.asset_id.clone(),
@@ -638,8 +638,24 @@ fn send_extra_success() {
     let (mut wallet_2, online_2) = get_funded_noutxo_wallet!();
 
     // start with 1 UTXO only so blind receives all use the same one
-    test_create_utxos(&mut wallet_1, &online_1, true, Some(1), None, FEE_RATE);
-    test_create_utxos(&mut wallet_2, &online_2, true, Some(1), None, FEE_RATE);
+    test_create_utxos(
+        &mut wallet_1,
+        &online_1,
+        true,
+        Some(1),
+        None,
+        FEE_RATE,
+        None,
+    );
+    test_create_utxos(
+        &mut wallet_2,
+        &online_2,
+        true,
+        Some(1),
+        None,
+        FEE_RATE,
+        None,
+    );
 
     // issue
     let asset_nia = test_issue_asset_nia(&mut wallet_1, &online_1, None);
@@ -844,7 +860,15 @@ fn send_extra_success() {
     // 3rd transfer, asset_cfa (extra in previous sends): wallet 1 > wallet 2
     //
 
-    test_create_utxos(&mut wallet_1, &online_1, true, Some(2), None, FEE_RATE);
+    test_create_utxos(
+        &mut wallet_1,
+        &online_1,
+        true,
+        Some(2),
+        None,
+        FEE_RATE,
+        Some(1),
+    );
 
     // send
     let receive_data_2 = test_blind_receive(&wallet_2);
@@ -2646,8 +2670,7 @@ fn no_change_on_pending_send() {
     // wallets
     let (mut wallet, online) = get_funded_noutxo_wallet!();
     let (mut rcv_wallet, rcv_online) = get_funded_wallet!();
-    let num_utxos_created = test_create_utxos(&mut wallet, &online, true, Some(3), None, FEE_RATE);
-    assert_eq!(num_utxos_created, 3);
+    test_create_utxos(&mut wallet, &online, true, Some(3), None, FEE_RATE, None);
 
     // issue 1 + get its UTXO
     let asset_1 = test_issue_asset_nia(&mut wallet, &online, None);
@@ -3038,7 +3061,15 @@ fn pending_incoming_transfer_fail() {
     // wallets
     let (mut wallet, online) = get_funded_wallet!();
     let (mut rcv_wallet, rcv_online) = get_funded_noutxo_wallet!();
-    test_create_utxos(&mut rcv_wallet, &rcv_online, false, Some(1), None, FEE_RATE);
+    test_create_utxos(
+        &mut rcv_wallet,
+        &rcv_online,
+        false,
+        Some(1),
+        None,
+        FEE_RATE,
+        None,
+    );
 
     // issue
     let asset = test_issue_asset_nia(&mut wallet, &online, None);
@@ -3204,7 +3235,7 @@ fn pending_transfer_input_fail() {
     // wallets
     let (mut wallet, online) = get_funded_noutxo_wallet!();
     let (rcv_wallet, _rcv_online) = get_funded_wallet!();
-    test_create_utxos(&mut wallet, &online, false, Some(1), None, FEE_RATE);
+    test_create_utxos(&mut wallet, &online, false, Some(1), None, FEE_RATE, None);
 
     // issue
     let asset = test_issue_asset_nia(&mut wallet, &online, None);
@@ -3285,8 +3316,7 @@ fn cfa_extra_success() {
     let (rcv_wallet, _rcv_online) = get_funded_wallet!();
 
     // create a single UTXO to issue assets on the same UTXO
-    let num_utxos_created = test_create_utxos(&mut wallet, &online, true, Some(1), None, FEE_RATE);
-    assert_eq!(num_utxos_created, 1);
+    test_create_utxos(&mut wallet, &online, true, Some(1), None, FEE_RATE, None);
 
     // issue NIA
     let asset_nia = test_issue_asset_nia(&mut wallet, &online, None);
@@ -3343,8 +3373,7 @@ fn uda_extra_success() {
     let (rcv_wallet, _rcv_online) = get_funded_wallet!();
 
     // create a single UTXO to issue assets on the same UTXO
-    let num_utxos_created = test_create_utxos(&mut wallet, &online, true, Some(1), None, FEE_RATE);
-    assert_eq!(num_utxos_created, 1);
+    test_create_utxos(&mut wallet, &online, true, Some(1), None, FEE_RATE, None);
 
     // issue NIA
     let asset_nia = test_issue_asset_nia(&mut wallet, &online, None);
@@ -3395,8 +3424,7 @@ fn psbt_rgb_consumer_success() {
 
     // create 1 UTXO
     println!("utxo 1");
-    let num_utxos_created = test_create_utxos(&mut wallet, &online, true, Some(1), None, FEE_RATE);
-    assert_eq!(num_utxos_created, 1);
+    test_create_utxos(&mut wallet, &online, true, Some(1), None, FEE_RATE, None);
     show_unspent_colorings(&mut wallet, "after create utxos 1");
 
     // issue a NIA asset
@@ -3411,8 +3439,7 @@ fn psbt_rgb_consumer_success() {
 
     // create 1 more UTXO for change, up_to false or AllocationsAlreadyAvailable is returned
     println!("utxo 2");
-    let num_utxos_created = test_create_utxos(&mut wallet, &online, false, Some(1), None, FEE_RATE);
-    assert_eq!(num_utxos_created, 1);
+    test_create_utxos(&mut wallet, &online, false, Some(1), None, FEE_RATE, None);
 
     // try to send the 1st asset
     println!("send_begin 1");
@@ -3486,15 +3513,15 @@ fn insufficient_bitcoins() {
     let (mut rcv_wallet, _rcv_online) = get_funded_wallet!();
 
     // create 1 UTXO with not enough bitcoins for a send and drain the rest
-    let num_utxos_created = test_create_utxos(
+    test_create_utxos(
         &mut wallet,
         &online,
         false,
         Some(1),
         Some(TINY_BTC_AMOUNT),
         FEE_RATE,
+        None,
     );
-    assert_eq!(num_utxos_created, 1);
     test_drain_to_keep(&mut wallet, &online, &test_get_address(&mut rcv_wallet));
 
     // issue an NIA asset
@@ -3524,15 +3551,15 @@ fn insufficient_bitcoins() {
 
     // create 1 UTXO for change (add funds, create UTXO, drain the rest)
     fund_wallet(test_get_address(&mut wallet));
-    let num_utxos_created = test_create_utxos(
+    test_create_utxos(
         &mut wallet,
         &online,
         false,
         Some(1),
         Some(TINY_BTC_AMOUNT),
         FEE_RATE,
+        None,
     );
-    assert_eq!(num_utxos_created, 1);
     test_drain_to_keep(&mut wallet, &online, &test_get_address(&mut rcv_wallet));
 
     // send works with no colorable UTXOs available as additional bitcoin inputs
@@ -3552,15 +3579,15 @@ fn insufficient_allocations_fail() {
     let (rcv_wallet, _rcv_online) = get_funded_wallet!();
 
     // create 1 UTXO with not enough bitcoins for a send
-    let num_utxos_created = test_create_utxos(
+    test_create_utxos(
         &mut wallet,
         &online,
         false,
         Some(1),
         Some(TINY_BTC_AMOUNT),
         FEE_RATE,
+        None,
     );
-    assert_eq!(num_utxos_created, 1);
 
     // issue an NIA asset
     let asset_nia_a = test_issue_asset_nia(&mut wallet, &online, None);
@@ -3583,8 +3610,7 @@ fn insufficient_allocations_fail() {
 
     // create 1 more UTXO for change, up_to false or AllocationsAlreadyAvailable is returned
     println!("utxo 2");
-    let num_utxos_created = test_create_utxos(&mut wallet, &online, false, Some(1), None, FEE_RATE);
-    assert_eq!(num_utxos_created, 1);
+    test_create_utxos(&mut wallet, &online, false, Some(1), None, FEE_RATE, None);
 
     // send works with no colorable UTXOs available as additional bitcoin inputs
     let unspents = test_list_unspents(&mut wallet, None, false);
@@ -3604,22 +3630,21 @@ fn insufficient_allocations_success() {
     let (rcv_wallet, _rcv_online) = get_funded_wallet!();
 
     // create 1 UTXO with not enough bitcoins for a send
-    let num_utxos_created = test_create_utxos(
+    test_create_utxos(
         &mut wallet,
         &online,
         false,
         Some(1),
         Some(TINY_BTC_AMOUNT),
         FEE_RATE,
+        None,
     );
-    assert_eq!(num_utxos_created, 1);
 
     // issue an NIA asset on the unspendable UTXO
     let asset_nia_a = test_issue_asset_nia(&mut wallet, &online, None);
 
     // create 2 more UTXOs, 1 for change + 1 as additional bitcoin input
-    let num_utxos_created = test_create_utxos(&mut wallet, &online, false, Some(2), None, FEE_RATE);
-    assert_eq!(num_utxos_created, 2);
+    test_create_utxos(&mut wallet, &online, false, Some(2), None, FEE_RATE, None);
 
     // send with 1 colorable UTXOs available as additional bitcoin input
     let receive_data_1 = test_blind_receive(&rcv_wallet);
@@ -3967,7 +3992,7 @@ fn witness_success() {
             },
         ],
     )]);
-    test_create_utxos(&mut wallet, &online, false, None, None, FEE_RATE);
+    test_create_utxos(&mut wallet, &online, false, None, None, FEE_RATE, None);
     let txid = test_send(&mut wallet, &online, &recipient_map);
     assert!(!txid.is_empty());
 
@@ -4030,7 +4055,7 @@ fn witness_success() {
     let batch_transfers = get_test_batch_transfers(&wallet, &txid);
     let batch_transfer = batch_transfers.first().unwrap();
     let asset_transfer = get_test_asset_transfer(&wallet, batch_transfer.idx);
-    let transfers = get_test_transfers(&wallet, asset_transfer.idx);
+    let transfers: Vec<DbTransfer> = get_test_transfers(&wallet, asset_transfer.idx).collect();
     for transfer in transfers {
         let (transfer_data, _) = get_test_transfer_data(&wallet, &transfer);
         assert_eq!(transfer_data.status, TransferStatus::Settled);
@@ -4128,7 +4153,7 @@ fn witness_multiple_assets_success() {
             ],
         ),
     ]);
-    test_create_utxos(&mut wallet, &online, false, None, None, FEE_RATE);
+    test_create_utxos(&mut wallet, &online, false, None, None, FEE_RATE, None);
     let txid = test_send(&mut wallet, &online, &recipient_map);
     assert!(!txid.is_empty());
 
@@ -4257,8 +4282,8 @@ fn witness_multiple_assets_success() {
     assert_eq!(asset_transfers.len(), 2);
     let transfers_1 = get_test_transfers(&wallet, asset_transfers.first().unwrap().idx);
     let transfers_2 = get_test_transfers(&wallet, asset_transfers.last().unwrap().idx);
-    transfers_1.iter().chain(transfers_2.iter()).for_each(|t| {
-        let (transfer_data, _) = get_test_transfer_data(&wallet, t);
+    transfers_1.chain(transfers_2).for_each(|t| {
+        let (transfer_data, _) = get_test_transfer_data(&wallet, &t);
         assert_eq!(transfer_data.status, TransferStatus::WaitingConfirmations);
     });
 
@@ -4298,8 +4323,8 @@ fn witness_multiple_assets_success() {
     assert_eq!(asset_transfers.len(), 2);
     let transfers_1 = get_test_transfers(&wallet, asset_transfers.first().unwrap().idx);
     let transfers_2 = get_test_transfers(&wallet, asset_transfers.last().unwrap().idx);
-    transfers_1.iter().chain(transfers_2.iter()).for_each(|t| {
-        let (transfer_data, _) = get_test_transfer_data(&wallet, t);
+    transfers_1.chain(transfers_2).for_each(|t| {
+        let (transfer_data, _) = get_test_transfer_data(&wallet, &t);
         assert_eq!(transfer_data.status, TransferStatus::Settled);
     });
     // asset has been received correctly
@@ -4825,8 +4850,15 @@ fn spend_double_receive() {
     let (mut wallet_3, online_3) = get_funded_wallet!();
     // create bigger UTXOs for wallet_2 so a single one can support a witness transfer
     let (mut wallet_2, online_2) = get_funded_noutxo_wallet!();
-    let created = test_create_utxos(&mut wallet_2, &online_2, false, None, Some(5000), FEE_RATE);
-    assert_eq!(created, UTXO_NUM);
+    test_create_utxos(
+        &mut wallet_2,
+        &online_2,
+        false,
+        None,
+        Some(5000),
+        FEE_RATE,
+        None,
+    );
 
     // issue
     println!("issue");
@@ -5174,7 +5206,7 @@ fn rgb_change_on_btc_change() {
     let (mut rcv_wallet, rcv_online) = get_funded_wallet!();
 
     // issue
-    test_create_utxos(&mut wallet, &online, false, Some(1), None, FEE_RATE);
+    test_create_utxos(&mut wallet, &online, false, Some(1), None, FEE_RATE, None);
     let asset = test_issue_asset_nia(&mut wallet, &online, None);
 
     // send with no available colorable UTXOs (need to allocate change to BTC change UTXO)
@@ -5255,8 +5287,7 @@ fn no_inexistent_utxos() {
 
     // create 1 UTXO
     let size = Some(UTXO_SIZE * 2);
-    let num_utxos_created = test_create_utxos(&mut wallet, &online, true, Some(1), size, FEE_RATE);
-    assert_eq!(num_utxos_created, 1);
+    test_create_utxos(&mut wallet, &online, true, Some(1), size, FEE_RATE, None);
 
     // issue
     let asset = test_issue_asset_nia(&mut wallet, &online, Some(&[AMOUNT]));
@@ -5292,8 +5323,7 @@ fn no_inexistent_utxos() {
     let result = test_issue_asset_uda_result(&mut wallet, &online, None, None, vec![]);
     assert!(matches!(result, Err(Error::InsufficientAllocationSlots)));
     // trying to create 1 UTXO with up_to = true should create 1
-    let num_utxos_created = test_create_utxos(&mut wallet, &online, true, Some(1), None, FEE_RATE);
-    assert_eq!(num_utxos_created, 1);
+    test_create_utxos(&mut wallet, &online, true, Some(1), None, FEE_RATE, None);
 
     // 1 UTXO being spent, 1 UTXO with exists = false, 1 new UTXO
     // issuing an asset should now succeed
@@ -5412,6 +5442,7 @@ fn _max_fee_exceeded_common(
         Some(20),
         Some(u32::MAX / 100),
         FEE_RATE,
+        None,
     );
 
     // prepare transfer data
@@ -5848,7 +5879,7 @@ fn skip_sync() {
     let batch_transfers = get_test_batch_transfers(&wallet, &txid_3);
     let batch_transfer = batch_transfers.iter().find(|t| t.idx == 5).unwrap();
     let asset_transfer = get_test_asset_transfer(&wallet, batch_transfer.idx);
-    let transfers = get_test_transfers(&wallet, asset_transfer.idx);
+    let transfers: Vec<DbTransfer> = get_test_transfers(&wallet, asset_transfer.idx).collect();
     assert_eq!(transfers.len(), 1);
     let transfer = transfers.first().unwrap();
     let (transfer_data, _) = get_test_transfer_data(&wallet, transfer);
@@ -5875,7 +5906,7 @@ fn skip_sync() {
     let batch_transfers = get_test_batch_transfers(&wallet, &txid_3);
     let batch_transfer = batch_transfers.iter().find(|t| t.idx == 5).unwrap();
     let asset_transfer = get_test_asset_transfer(&wallet, batch_transfer.idx);
-    let transfers = get_test_transfers(&wallet, asset_transfer.idx);
+    let transfers: Vec<DbTransfer> = get_test_transfers(&wallet, asset_transfer.idx).collect();
     let transfer = transfers.first().unwrap();
     let (transfer_data, _) = get_test_transfer_data(&wallet, transfer);
     assert_eq!(transfer_data.status, TransferStatus::Settled);
@@ -6836,8 +6867,15 @@ fn blinded_change_failed_xfer() {
     let (mut wallet_2, online_2) = get_funded_wallet!();
 
     // create 2 small UTXOs on wallet 1: 1 for issuance, 1 for change
-    let created = test_create_utxos(&mut wallet_1, &online_1, true, Some(2), Some(487), FEE_RATE);
-    assert_eq!(created, 2);
+    test_create_utxos(
+        &mut wallet_1,
+        &online_1,
+        true,
+        Some(2),
+        Some(487),
+        FEE_RATE,
+        None,
+    );
 
     // issue
     let asset = test_issue_asset_nia(&mut wallet_1, &online_1, None);
@@ -6909,15 +6947,15 @@ fn blinded_change_failed_xfer() {
     wait_for_refresh(&mut wallet_1, &online_1, None, None);
 
     // create another small UTXO on wallet 1 for blinded change
-    let created = test_create_utxos(
+    test_create_utxos(
         &mut wallet_1,
         &online_1,
         false,
         Some(1),
         Some(487),
         FEE_RATE,
+        None,
     );
-    assert_eq!(created, 1);
 
     // send 3: 1 > 2 (spend the change)
     show_unspent_colorings(&mut wallet_1, "wallet 1: pre send 3");
@@ -6994,8 +7032,15 @@ fn blinded_change_send_begin_only() {
     let (mut wallet_2, online_2) = get_funded_wallet!();
 
     // create 2 small UTXOs on wallet 1: 1 for issuance, 1 for change
-    let created = test_create_utxos(&mut wallet_1, &online_1, true, Some(2), Some(487), FEE_RATE);
-    assert_eq!(created, 2);
+    test_create_utxos(
+        &mut wallet_1,
+        &online_1,
+        true,
+        Some(2),
+        Some(487),
+        FEE_RATE,
+        None,
+    );
 
     // issue
     let asset = test_issue_asset_nia(&mut wallet_1, &online_1, None);
@@ -7062,15 +7107,15 @@ fn blinded_change_send_begin_only() {
     wait_for_refresh(&mut wallet_1, &online_1, None, None);
 
     // create another small UTXO on wallet 1 for blinded change
-    let created = test_create_utxos(
+    test_create_utxos(
         &mut wallet_1,
         &online_1,
         false,
         Some(1),
         Some(487),
         FEE_RATE,
+        None,
     );
-    assert_eq!(created, 1);
 
     // send 3: 1 > 2 (spend the change)
     show_unspent_colorings(&mut wallet_1, "wallet 1: pre send 3");
@@ -7505,7 +7550,15 @@ fn allocations() {
     let mut wallet_2 = get_test_wallet(true, Some(6)); // using 6 max allocation per UTXO
     let online_2 = test_go_online(&mut wallet_2, true, None);
     fund_wallet(test_get_address(&mut wallet_2));
-    test_create_utxos(&mut wallet_2, &online_2, true, Some(1), None, FEE_RATE);
+    test_create_utxos(
+        &mut wallet_2,
+        &online_2,
+        true,
+        Some(1),
+        None,
+        FEE_RATE,
+        None,
+    );
 
     // issue (allocations all on the same UTXO)
     let asset_1 = test_issue_asset_nia(&mut wallet_1, &online_1, None);

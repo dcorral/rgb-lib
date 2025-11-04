@@ -499,7 +499,7 @@ fn fail() {
 
     fund_wallet(test_get_address(&mut wallet));
     mine(false, false);
-    test_create_utxos(&mut wallet, &online, true, Some(1), None, FEE_RATE);
+    test_create_utxos(&mut wallet, &online, true, Some(1), None, FEE_RATE, None);
 
     // bad asset id
     let result = wallet.blind_receive(
@@ -710,15 +710,15 @@ fn multiple_receive_same_utxo() {
     let (mut wallet_send_2, online_send_2) = get_funded_wallet!();
 
     // create 1 colorable UTXO on receiver wallet
-    let created = test_create_utxos(
+    test_create_utxos(
         &mut wallet_recv,
         &online_recv,
         false,
         Some(1),
         None,
         FEE_RATE,
+        None,
     );
-    assert_eq!(created, 1);
     let unspents_recv = test_list_unspents(&mut wallet_recv, None, false);
     assert_eq!(unspents_recv.iter().filter(|u| u.utxo.colorable).count(), 1);
 
