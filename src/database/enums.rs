@@ -324,6 +324,15 @@ impl Assignment {
             0
         }
     }
+
+    #[cfg(any(feature = "electrum", feature = "esplora"))]
+    pub(crate) fn inflation_amount(&self) -> u64 {
+        if let Self::InflationRight(amt) = self {
+            *amt
+        } else {
+            0
+        }
+    }
 }
 
 impl From<Assignment> for Value {
