@@ -31,6 +31,54 @@ pub struct AssignmentsCollection {
 }
 
 impl AssignmentsCollection {
+    fn add_fungible(&mut self, amt: u64) {
+        self.fungible += amt;
+    }
+
+    fn add_non_fungible(&mut self) {
+        self.non_fungible = true;
+    }
+
+    fn add_inflation(&mut self, amt: u64) {
+        self.inflation += amt;
+    }
+
+    fn add_replace(&mut self) {
+        self.replace += 1;
+    }
+
+    fn add_opout_state(&mut self, opout: &Opout, state: &AllocatedState) {
+        match state {
+            AllocatedState::Amount(amt) if opout.ty == OS_ASSET => {
+                self.add_fungible(amt.as_u64());
+            }
+            AllocatedState::Amount(amt) if opout.ty == OS_INFLATION => {
+                self.add_inflation(amt.as_u64());
+            }
+            AllocatedState::Data(_) => {
+                self.add_non_fungible();
+            }
+            AllocatedState::Void if opout.ty == OS_REPLACE => {
+                self.add_replace();
+            }
+            _ => {}
+        }
+    }
+
+    fn opout_contributes(&self, opout: &Opout, state: &AllocatedState, needed: &Self) -> bool {
+        match (state, opout.ty) {
+            (AllocatedState::Amount(_), OS_ASSET) => {
+                needed.fungible.saturating_sub(self.fungible) > 0
+            }
+            (AllocatedState::Amount(_), OS_INFLATION) => {
+                needed.inflation.saturating_sub(self.inflation) > 0
+            }
+            (AllocatedState::Data(_), _) => needed.non_fungible && !self.non_fungible,
+            (AllocatedState::Void, OS_REPLACE) => needed.replace.saturating_sub(self.replace) > 0,
+            _ => false,
+        }
+    }
+
     fn change(&self, needed: &Self) -> Self {
         Self {
             fungible: self.fungible - needed.fungible,
@@ -59,7 +107,7 @@ impl AssignmentsCollection {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct AssetSpend {
-    txo_map: HashMap<i32, (BdkOutPoint, Vec<Assignment>)>,
+    txo_map: HashMap<i32, (Outpoint, Vec<Assignment>)>,
     assignments_collected: AssignmentsCollection,
     assignments_needed: AssignmentsCollection,
 }
@@ -2173,9 +2221,9 @@ impl Wallet {
             self.logger,
             "Asset input assignments {:?}", assignments_collected
         );
-        let txo_map: HashMap<i32, (BdkOutPoint, Vec<Assignment>)> = input_allocations
+        let txo_map: HashMap<i32, (Outpoint, Vec<Assignment>)> = input_allocations
             .into_iter()
-            .map(|(k, v)| (k.idx, (k.outpoint().into(), v)))
+            .map(|(k, v)| (k.idx, (k.outpoint(), v)))
             .collect();
         Ok(AssetSpend {
             txo_map,
@@ -2325,28 +2373,60 @@ impl Wallet {
             .map(|txin| txin.previous_outpoint)
             .collect::<HashSet<RgbOutpoint>>();
 
-        let input_outpoints: Vec<Outpoint> = prev_outputs
-            .clone()
-            .into_iter()
-            .map(Outpoint::from)
+        let input_outpoints: Vec<Outpoint> = psbt
+            .unsigned_tx
+            .input
+            .iter()
+            .map(|txin| Outpoint::from(txin.previous_output))
             .collect();
 
         let mut all_transitions: HashMap<ContractId, Vec<Transition>> = HashMap::new();
         let mut asset_beneficiaries = bmap![];
+        let mut main_assets_extras: HashMap<ContractId, HashMap<Opout, AllocatedState>> =
+            HashMap::new();
         for (asset_id, transfer_info) in transfer_info_map.iter_mut() {
             let contract_id = ContractId::from_str(asset_id).expect("invalid contract ID");
+
+            let asset_utxos = transfer_info
+                .asset_spend
+                .txo_map
+                .values()
+                .map(|(o, _)| RgbOutpoint::from(o.clone()));
+            let mut all_opout_state_vec = Vec::new();
+            for (_explicit_seal, opout_state_map) in
+                runtime.contract_assignments_for(contract_id, asset_utxos.clone())?
+            {
+                all_opout_state_vec.extend(opout_state_map.into_iter());
+            }
+
+            // sort by state globally (smaller to bigger)
+            all_opout_state_vec.sort_by_key(|(_, state)| match state {
+                AllocatedState::Amount(amt) => amt.as_u64(),
+                _ => 0, // non-amount states sorted first
+            });
+
+            let mut inputs_added = AssignmentsCollection::default();
+            let mut uda_state = None;
             let mut asset_transition_builder =
                 runtime.transition_builder(contract_id, "transfer")?;
-
-            let mut uda_state = None;
-            for (_explicit_seal, opout_state_map) in
-                runtime.contract_assignments_for(contract_id, prev_outputs.clone())?
-            {
-                for (opout, state) in opout_state_map {
-                    // there can be only a single state when contract is UDA
-                    uda_state = Some(state.clone());
-                    asset_transition_builder = asset_transition_builder.add_input(opout, state)?;
+            for (opout, state) in all_opout_state_vec {
+                let should_add_as_input = inputs_added.opout_contributes(
+                    &opout,
+                    &state,
+                    &transfer_info.asset_spend.assignments_needed,
+                );
+                if !should_add_as_input {
+                    main_assets_extras
+                        .entry(contract_id)
+                        .or_default()
+                        .insert(opout, state.clone());
+                    continue;
                 }
+
+                inputs_added.add_opout_state(&opout, &state);
+                // there can be only a single state when contract is UDA
+                uda_state = Some(state.clone());
+                asset_transition_builder = asset_transition_builder.add_input(opout, state)?;
             }
 
             let mut beneficiaries = vec![];
@@ -2392,10 +2472,8 @@ impl Wallet {
                 }
             }
 
-            let change = transfer_info
-                .asset_spend
-                .assignments_collected
-                .change(&transfer_info.asset_spend.assignments_needed);
+            let change = inputs_added.change(&transfer_info.asset_spend.assignments_needed);
+
             if change != AssignmentsCollection::default() {
                 transfer_info.change = change.clone();
                 let seal = self._get_change_seal(
@@ -2451,6 +2529,7 @@ impl Wallet {
         }
 
         let mut extra_state = HashMap::<ContractId, HashMap<Opout, AllocatedState>>::new();
+        extra_state.extend(main_assets_extras);
         for id in runtime.contracts_assigning(prev_outputs.clone())? {
             if transfer_info_map.contains_key(&id.to_string()) {
                 continue;
@@ -2468,17 +2547,7 @@ impl Wallet {
             for (opout, state) in opout_state_map {
                 let transition_type = schema.default_transition_for_assignment(&opout.ty);
                 let mut extra_builder = runtime.transition_builder_raw(cid, transition_type)?;
-                let assignment = match &state {
-                    AllocatedState::Amount(amt) if opout.ty == OS_ASSET => {
-                        Assignment::Fungible(amt.as_u64())
-                    }
-                    AllocatedState::Amount(amt) if opout.ty == OS_INFLATION => {
-                        Assignment::InflationRight(amt.as_u64())
-                    }
-                    AllocatedState::Data(_) => Assignment::NonFungible,
-                    AllocatedState::Void if opout.ty == OS_REPLACE => Assignment::ReplaceRight,
-                    _ => unreachable!(),
-                };
+                let assignment = Assignment::from_opout_and_state(opout, &state);
                 let seal = self._get_change_seal(
                     &btc_change,
                     &mut change_utxo_option,
@@ -3052,7 +3121,12 @@ impl Wallet {
         // prepare BDK PSBT
         let mut all_inputs: HashSet<BdkOutPoint> = transfer_info_map
             .values()
-            .flat_map(|ti| ti.asset_spend.txo_map.values().map(|(op, _)| *op))
+            .flat_map(|ti| {
+                ti.asset_spend
+                    .txo_map
+                    .values()
+                    .map(|(o, _)| o.clone().into())
+            })
             .collect();
         let (mut psbt, btc_change) = self._try_prepare_psbt(
             &input_unspents,

@@ -311,8 +311,12 @@ pub(crate) fn get_test_transfers(wallet: &Wallet, asset_transfer_idx: i32) -> Ve
 
 pub(crate) fn get_test_asset_transfer(wallet: &Wallet, batch_transfer_idx: i32) -> DbAssetTransfer {
     let asset_transfers = get_test_asset_transfers(wallet, batch_transfer_idx);
-    assert_eq!(asset_transfers.len(), 1);
-    asset_transfers.first().unwrap().clone()
+    let user_driven_transfers = asset_transfers
+        .into_iter()
+        .filter(|t| t.user_driven)
+        .collect::<Vec<_>>();
+    assert_eq!(user_driven_transfers.len(), 1);
+    user_driven_transfers.first().unwrap().clone()
 }
 
 pub(crate) fn get_test_coloring(wallet: &Wallet, asset_transfer_idx: i32) -> DbColoring {
