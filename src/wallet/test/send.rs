@@ -5651,7 +5651,8 @@ fn skip_sync() {
     let (mut rcv_wallet, rcv_online) = get_funded_wallet!();
 
     // issue (2 allocations, 1 per send)
-    let asset = test_issue_asset_nia(&mut wallet, &online, Some(&[100, 200]));
+    let issue_amounts = [100, 200];
+    let asset = test_issue_asset_nia(&mut wallet, &online, Some(&issue_amounts));
     let transfers = test_list_transfers(&wallet, Some(&asset.asset_id));
     assert_eq!(transfers.len(), 1);
     assert_eq!(transfers.first().unwrap().kind, TransferKind::Issuance);
@@ -5686,6 +5687,11 @@ fn skip_sync() {
     let (transfer_data, _) = get_test_transfer_data(&wallet, &transfer);
 
     // amount
+    let change = issue_amounts[0] - amount;
+    assert_eq!(
+        transfer_data.assignments,
+        vec![Assignment::Fungible(change)]
+    );
     assert_eq!(rcv_transfer.requested_assignment, Some(Assignment::Any));
     assert_eq!(
         transfer.requested_assignment,
@@ -5731,6 +5737,10 @@ fn skip_sync() {
     let (transfer_data, _) = get_test_transfer_data(&wallet, &transfer);
 
     // amount
+    assert_eq!(
+        transfer_data.assignments,
+        vec![Assignment::Fungible(issue_amounts[1] - amount)]
+    );
     assert_eq!(rcv_transfer.requested_assignment, Some(Assignment::Any));
     assert_eq!(
         transfer.requested_assignment,
@@ -5813,6 +5823,7 @@ fn skip_sync() {
     let batch_transfer = batch_transfers.iter().find(|t| t.idx == 5).unwrap();
     let asset_transfer = get_test_asset_transfer(&wallet, batch_transfer.idx);
     let transfers = get_test_transfers(&wallet, asset_transfer.idx);
+    assert_eq!(transfers.len(), 1);
     let transfer = transfers.first().unwrap();
     let (transfer_data, _) = get_test_transfer_data(&wallet, transfer);
     assert_eq!(
