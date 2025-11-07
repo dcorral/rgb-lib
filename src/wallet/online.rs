@@ -1532,34 +1532,35 @@ impl Wallet {
 
         let resolver = OffchainResolver {
             witness_id,
-            consignment: &IndexedConsignment::new(&consignment),
+            consignment: &consignment,
             fallback: self.blockchain_resolver(),
         };
 
         debug!(self.logger, "Validating consignment...");
         let asset_schema: AssetSchema = consignment.schema_id().try_into()?;
-        let types = asset_schema.types();
-        let valid_consignment =
-            match consignment
-                .clone()
-                .validate(&resolver, self.chain_net(), None, types.clone())
-            {
-                Ok(consignment) => consignment,
-                Err(ValidationError::InvalidConsignment(e)) => {
-                    error!(self.logger, "Consignment is invalid: {}", e);
-                    return self._refuse_consignment(
-                        proxy_url,
-                        recipient_id,
-                        &mut updated_batch_transfer,
-                    );
-                }
-                Err(ValidationError::ResolverError(e)) => {
-                    warn!(self.logger, "Network error during consignment validation");
-                    return Err(Error::Network {
-                        details: e.to_string(),
-                    });
-                }
-            };
+        let trusted_typesystem = asset_schema.types();
+        let validation_config = ValidationConfig {
+            chain_net: self.chain_net(),
+            trusted_typesystem,
+            ..Default::default()
+        };
+        let valid_consignment = match consignment.clone().validate(&resolver, &validation_config) {
+            Ok(consignment) => consignment,
+            Err(ValidationError::InvalidConsignment(e)) => {
+                error!(self.logger, "Consignment is invalid: {}", e);
+                return self._refuse_consignment(
+                    proxy_url,
+                    recipient_id,
+                    &mut updated_batch_transfer,
+                );
+            }
+            Err(ValidationError::ResolverError(e)) => {
+                warn!(self.logger, "Network error during consignment validation");
+                return Err(Error::Network {
+                    details: e.to_string(),
+                });
+            }
+        };
         let validity = valid_consignment.validation_status().validity();
         debug!(self.logger, "Consignment validity: {:?}", validity);
 
@@ -1963,13 +1964,14 @@ impl Wallet {
                 safe_height = Some(NonZeroU32::new(tx_height).unwrap())
             }
             let asset_schema: AssetSchema = consignment.schema_id().try_into()?;
+            let validation_config = ValidationConfig {
+                chain_net: self.chain_net(),
+                trusted_typesystem: asset_schema.types(),
+                safe_height,
+                ..Default::default()
+            };
             let consignment = consignment
-                .validate(
-                    self.blockchain_resolver(),
-                    self.chain_net(),
-                    safe_height,
-                    asset_schema.types(),
-                )
+                .validate(self.blockchain_resolver(), &validation_config)
                 .map_err(|_| InternalError::Unexpected)?;
             let mut runtime = self.rgb_runtime()?;
             let validation_status =

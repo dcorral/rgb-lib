@@ -940,7 +940,7 @@ pub(crate) fn load_rgb_runtime(wallet_dir: PathBuf) -> Result<RgbRuntime, Error>
 #[cfg(any(feature = "electrum", feature = "esplora"))]
 pub(crate) struct OffchainResolver<'a, 'cons, const TRANSFER: bool> {
     pub(crate) witness_id: RgbTxid,
-    pub(crate) consignment: &'cons IndexedConsignment<'cons, TRANSFER>,
+    pub(crate) consignment: &'cons Consignment<TRANSFER>,
     pub(crate) fallback: &'a AnyResolver,
 }
 
@@ -951,8 +951,9 @@ impl<const TRANSFER: bool> ResolveWitness for OffchainResolver<'_, '_, TRANSFER>
             return self.fallback.resolve_witness(witness_id);
         }
         self.consignment
-            .pub_witness(witness_id)
-            .and_then(|p| p.tx().cloned())
+            .bundled_witnesses()
+            .find(|bw| bw.witness_id() == witness_id)
+            .and_then(|p| p.pub_witness.tx().cloned())
             .map_or_else(
                 || self.fallback.resolve_witness(witness_id),
                 |tx| Ok(WitnessStatus::Resolved(tx, WitnessOrd::Tentative)),

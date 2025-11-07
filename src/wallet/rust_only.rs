@@ -337,30 +337,31 @@ impl Wallet {
 
         let resolver = OffchainResolver {
             witness_id,
-            consignment: &IndexedConsignment::new(&consignment),
+            consignment: &consignment,
             fallback: self.blockchain_resolver(),
         };
 
         debug!(self.logger, "Validating consignment...");
         let asset_schema: AssetSchema = consignment.schema_id().try_into()?;
-        let types = asset_schema.types();
-        let valid_consignment =
-            match consignment
-                .clone()
-                .validate(&resolver, self.chain_net(), None, types.clone())
-            {
-                Ok(consignment) => consignment,
-                Err(ValidationError::InvalidConsignment(e)) => {
-                    error!(self.logger, "Consignment is invalid: {}", e);
-                    return Err(Error::InvalidConsignment);
-                }
-                Err(ValidationError::ResolverError(e)) => {
-                    warn!(self.logger, "Network error during consignment validation");
-                    return Err(Error::Network {
-                        details: e.to_string(),
-                    });
-                }
-            };
+        let trusted_typesystem = asset_schema.types();
+        let validation_config = ValidationConfig {
+            chain_net: self.chain_net(),
+            trusted_typesystem,
+            ..Default::default()
+        };
+        let valid_consignment = match consignment.clone().validate(&resolver, &validation_config) {
+            Ok(consignment) => consignment,
+            Err(ValidationError::InvalidConsignment(e)) => {
+                error!(self.logger, "Consignment is invalid: {}", e);
+                return Err(Error::InvalidConsignment);
+            }
+            Err(ValidationError::ResolverError(e)) => {
+                warn!(self.logger, "Network error during consignment validation");
+                return Err(Error::Network {
+                    details: e.to_string(),
+                });
+            }
+        };
         let validity = valid_consignment.validation_status().validity();
         debug!(self.logger, "Consignment validity: {:?}", validity);
 
@@ -660,11 +661,16 @@ impl Wallet {
         let contract_id = consignment.contract_id();
 
         let asset_schema: AssetSchema = consignment.schema_id().try_into()?;
-        let types = asset_schema.types();
+        let trusted_typesystem = asset_schema.types();
         let contract = consignment.into_contract();
+        let validation_config = ValidationConfig {
+            chain_net: self.chain_net(),
+            trusted_typesystem,
+            ..Default::default()
+        };
         let valid_contract = contract
             .clone()
-            .validate(&DumbResolver, self.chain_net(), None, types)
+            .validate(&DumbResolver, &validation_config)
             .expect("valid consignment");
 
         self.save_new_asset_internal(&runtime, contract_id, asset_schema, valid_contract)?;

@@ -444,14 +444,14 @@ pub(crate) fn test_save_new_asset(
 
     let contract = consignment.clone().into_contract();
     let asset_schema: AssetSchema = consignment.schema_id().try_into().unwrap();
+    let validation_config = ValidationConfig {
+        chain_net: rcv_wallet.chain_net(),
+        trusted_typesystem: asset_schema.types(),
+        ..Default::default()
+    };
     let valid_contract = contract
         .clone()
-        .validate(
-            &DumbResolver,
-            rcv_wallet.chain_net(),
-            None,
-            asset_schema.types(),
-        )
+        .validate(&DumbResolver, &validation_config)
         .unwrap();
     let mut runtime = rcv_wallet.rgb_runtime().unwrap();
     runtime

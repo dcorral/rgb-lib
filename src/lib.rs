@@ -193,13 +193,14 @@ use rgbstd::{
         TokenData,
     },
     validation::{
-        ResolveWitness, Scripts, Status, WitnessOrdProvider, WitnessResolverError, WitnessStatus,
+        ResolveWitness, Scripts, Status, ValidationConfig, WitnessOrdProvider,
+        WitnessResolverError, WitnessStatus,
     },
 };
 #[cfg(any(feature = "electrum", feature = "esplora"))]
 use rgbstd::{
     Assign,
-    containers::IndexedConsignment,
+    containers::Consignment,
     validation::{ValidationError, Validity, Warning},
 };
 #[cfg(any(feature = "electrum", feature = "esplora"))]

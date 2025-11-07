@@ -1276,6 +1276,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "daggy"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "804169db156b21258a2545757336922d93dfa229892c75911a0ad141aa0ff241"
+dependencies = [
+ "petgraph",
+ "serde",
+]
+
+[[package]]
 name = "darling"
 version = "0.20.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1528,6 +1538,12 @@ name = "file-format"
 version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ff8badf6e72ff15e42c9ade15d01375837173b17d10c228ab41d821082619db"
+
+[[package]]
+name = "fixedbitset"
+version = "0.5.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
 
 [[package]]
 name = "fluent-uri"
@@ -2674,6 +2690,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3148f5046208a5d56bcfc03053e3ca6334e51da8dfb19b6cdc8b306fae3283e"
 
 [[package]]
+name = "petgraph"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8701b58ea97060d5e5b155d383a69952a60943f0e6dfe30b04c287beb0b27455"
+dependencies = [
+ "fixedbitset",
+ "hashbrown 0.15.3",
+ "indexmap 2.9.0",
+ "serde",
+ "serde_derive",
+]
+
+[[package]]
 name = "pgvector"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3128,9 +3157,9 @@ dependencies = [
 
 [[package]]
 name = "rgb-consensus"
-version = "0.11.1-rc.5"
+version = "0.11.1-rc.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb451849f3250194143222aaebc13fdc50b4767d5275a1fd07dc7aae17d40af4"
+checksum = "346fa6c6a50a3d08ebeb2dd6fbf65e80704e34ddb7a77773ee852266206de060"
 dependencies = [
  "aluvm",
  "amplify",
@@ -3138,6 +3167,7 @@ dependencies = [
  "bp-core",
  "chrono",
  "commit_verify",
+ "daggy",
  "getrandom 0.3.3",
  "mime",
  "secp256k1 0.30.0",
@@ -3150,9 +3180,9 @@ dependencies = [
 
 [[package]]
 name = "rgb-invoicing"
-version = "0.11.1-rc.5"
+version = "0.11.1-rc.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44c621ab9eb5c9a0dd2cd5ba8b73d92d8030f781f795470ed9800b66c9f213bc"
+checksum = "f7013a67cfac5b1f3c4c60430f334ec2909d7c0157b6be3764733ba03a73ba69"
 dependencies = [
  "amplify",
  "baid64",
@@ -3235,9 +3265,9 @@ dependencies = [
 
 [[package]]
 name = "rgb-ops"
-version = "0.11.1-rc.5"
+version = "0.11.1-rc.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2d5351a03b7423768d2742ae522097261141bb45886f6acb84a1298b8d408db"
+checksum = "541b018be4e27d552e77929fb3d7705ed21dca8736a993bb34389c423bb5f37c"
 dependencies = [
  "aluvm",
  "amplify",
@@ -3263,9 +3293,9 @@ dependencies = [
 
 [[package]]
 name = "rgb-psbt-utils"
-version = "0.11.1-rc.5"
+version = "0.11.1-rc.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95b3d3aff15e2ca289967accab2c7c8a4b9bb99556d5eed00571b1c9426dce86"
+checksum = "8228f8be18ae710b0c9de88af3171a01127d134e2619e4f604c16946133adb0d"
 dependencies = [
  "amplify",
  "baid64",
