@@ -2590,19 +2590,18 @@ impl Wallet {
             }
         }
 
-        let (opreturn_index, _) = rgb_psbt
+        let opreturn_index = rgb_psbt
             .to_unsigned_tx()
             .outputs
             .iter()
             .enumerate()
             .find(|(_, o)| o.script_pubkey.is_op_return())
-            .expect("psbt should have an op_return output");
-        let (_, opreturn_output) = rgb_psbt
+            .expect("psbt should have an op_return output")
+            .0;
+        rgb_psbt
             .outputs_mut()
-            .enumerate()
-            .find(|(i, _)| i == &opreturn_index)
-            .unwrap();
-        opreturn_output
+            .nth(opreturn_index)
+            .unwrap()
             .set_opret_host()
             .map_err(InternalError::from)?;
 
