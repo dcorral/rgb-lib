@@ -7308,3 +7308,472 @@ fn send_end_without_send_begin() {
     let result = wallet_2.send_end(online_2, signed_psbt, false);
     assert_matches!(result, Err(Error::UnknownTransfer { txid }) if txid == psbt_txid);
 }
+
+#[cfg(feature = "electrum")]
+#[test]
+#[parallel]
+fn allocations() {
+    fn get_coloring_map(wallet: &Wallet, unspents: &[Unspent]) -> HashMap<DbTxo, Vec<DbColoring>> {
+        let mut coloring_map: HashMap<DbTxo, Vec<DbColoring>> = HashMap::new();
+        let db_txos = wallet.database.iter_txos().unwrap();
+        let db_colorings: Vec<DbColoring> = wallet.database.iter_colorings().unwrap();
+        for u in unspents {
+            let outpoint = &u.utxo.outpoint;
+            let db_txo = db_txos
+                .iter()
+                .find(|t| t.txid == outpoint.txid && t.vout == outpoint.vout)
+                .unwrap();
+            let txo_colorings: Vec<&DbColoring> = db_colorings
+                .iter()
+                .filter(|c| c.txo_idx == db_txo.idx)
+                .collect();
+            coloring_map.insert(db_txo.clone(), txo_colorings.into_iter().cloned().collect());
+        }
+        coloring_map
+    }
+
+    fn check_allocations(
+        wallet: &Wallet,
+        unspents_colorable: &[Unspent],
+        amounts_user: &[u64],
+        amounts_auto: &[u64],
+        pending_xfer: bool,
+    ) {
+        let coloring_map = get_coloring_map(wallet, unspents_colorable);
+        let db_asset_transfers = wallet.database.iter_asset_transfers().unwrap();
+        let assignments_auto: Vec<_> = amounts_auto
+            .iter()
+            .map(|a| Assignment::Fungible(*a))
+            .collect();
+        // check input colorings
+        let input_colorings: Vec<_> = coloring_map
+            .iter()
+            .flat_map(|(_, c)| c)
+            .filter(|c| c.r#type == ColoringType::Input)
+            .collect();
+        if pending_xfer {
+            let assignments_user: Vec<_> = amounts_user
+                .iter()
+                .map(|a| Assignment::Fungible(*a))
+                .collect();
+            let assignments_all: Vec<_> = assignments_user
+                .iter()
+                .chain(assignments_auto.iter())
+                .collect();
+            assert_eq!(input_colorings.len(), assignments_all.len());
+            for ass in assignments_all {
+                input_colorings
+                    .iter()
+                    .find(|c| &c.assignment == ass)
+                    .unwrap();
+            }
+            assert!(
+                input_colorings
+                    .iter()
+                    .filter(|c| assignments_user.contains(&c.assignment))
+                    .all(|c| db_asset_transfers
+                        .iter()
+                        .find(|a| a.idx == c.asset_transfer_idx)
+                        .unwrap()
+                        .user_driven)
+            );
+            assert!(
+                input_colorings
+                    .iter()
+                    .filter(|c| assignments_auto.contains(&c.assignment))
+                    .all(|c| !db_asset_transfers
+                        .iter()
+                        .find(|a| a.idx == c.asset_transfer_idx)
+                        .unwrap()
+                        .user_driven)
+            );
+        } else {
+            assert_eq!(input_colorings.len(), 0);
+        }
+        // check change colorings
+        let change_colorings: Vec<_> = coloring_map
+            .iter()
+            .flat_map(|(_, c)| c)
+            .filter(|c| c.r#type == ColoringType::Change)
+            .collect();
+        assert_eq!(change_colorings.len(), amounts_auto.len());
+        for ass in &assignments_auto {
+            change_colorings
+                .iter()
+                .find(|c| &c.assignment == ass)
+                .unwrap();
+        }
+        assert!(
+            change_colorings
+                .iter()
+                .filter(|c| assignments_auto.contains(&c.assignment))
+                .all(|c| !db_asset_transfers
+                    .iter()
+                    .find(|a| a.idx == c.asset_transfer_idx)
+                    .unwrap()
+                    .user_driven)
+        );
+    }
+
+    fn check_unspents(
+        unspents_colorable: &[Unspent],
+        amounts_user: &[u64],
+        amounts_auto: &[u64],
+        pending_xfer: bool,
+    ) {
+        let assignments_auto: Vec<_> = amounts_auto
+            .iter()
+            .map(|a| Assignment::Fungible(*a))
+            .collect();
+        // check input
+        let inputs: Vec<_> = unspents_colorable
+            .iter()
+            .filter(|u| u.rgb_allocations.iter().all(|a| a.settled))
+            .collect();
+        if pending_xfer {
+            assert_eq!(unspents_colorable.len(), 2);
+            assert_eq!(inputs.len(), 1);
+            let assignments_user: Vec<_> = amounts_user
+                .iter()
+                .map(|a| Assignment::Fungible(*a))
+                .collect();
+            let assignments_all: Vec<_> = assignments_user
+                .iter()
+                .chain(assignments_auto.iter())
+                .collect();
+            let assignments_input: Vec<_> = inputs[0]
+                .rgb_allocations
+                .iter()
+                .map(|a| &a.assignment)
+                .collect();
+            assert_eq!(assignments_input.len(), assignments_all.len());
+            for ass in assignments_all {
+                assert!(assignments_input.contains(&ass));
+            }
+        } else {
+            assert_eq!(unspents_colorable.len(), 1);
+        }
+        // check change
+        let changes: Vec<_> = if pending_xfer {
+            unspents_colorable
+                .iter()
+                .filter(|u| u.rgb_allocations.iter().any(|a| !a.settled))
+                .collect()
+        } else {
+            unspents_colorable
+                .iter()
+                .filter(|u| u.rgb_allocations.iter().any(|a| a.settled))
+                .collect()
+        };
+        assert_eq!(changes.len(), 1);
+        let assignments_change: Vec<_> = changes[0]
+            .rgb_allocations
+            .iter()
+            .map(|a| &a.assignment)
+            .collect();
+        assert_eq!(assignments_change.len(), assignments_auto.len());
+        for ass in assignments_auto {
+            assert!(assignments_change.contains(&&ass));
+        }
+    }
+
+    initialize();
+
+    let amount_1: u64 = 10;
+    let amount_2: u64 = 20;
+    let amount_3: u64 = 30;
+    let amount_4: u64 = 40;
+    let amount_5: u64 = 50;
+    let amount_6: u64 = 60;
+    let amounts_user = [amount_1, amount_2];
+    let amounts_auto = [amount_3, amount_4, amount_5, amount_6];
+
+    // wallets
+    // - wallet 1 (standard)
+    let (mut wallet_1, online_1) = get_funded_wallet!();
+    // - wallet 2 (1 UTXO, 6 max allocations per UTXO)
+    let mut wallet_2 = get_test_wallet(true, Some(6)); // using 6 max allocation per UTXO
+    let online_2 = test_go_online(&mut wallet_2, true, None);
+    fund_wallet(test_get_address(&mut wallet_2));
+    test_create_utxos(&mut wallet_2, &online_2, true, Some(1), None, FEE_RATE);
+
+    // issue (allocations all on the same UTXO)
+    let asset_1 = test_issue_asset_nia(&mut wallet_1, &online_1, None);
+    let asset_2 = test_issue_asset_cfa(&mut wallet_1, &online_1, None, None);
+    show_unspent_colorings(&mut wallet_1, "wallet 1 after issuance");
+
+    // send to wallet 2, creating 6 allocations (4x asset 1, 2x asset 2) on the same UTXO
+    let receive_data_1 = test_blind_receive(&wallet_2);
+    let receive_data_2 = test_blind_receive(&wallet_2);
+    let receive_data_3 = test_blind_receive(&wallet_2);
+    let receive_data_4 = test_blind_receive(&wallet_2);
+    let receive_data_5 = test_blind_receive(&wallet_2);
+    let receive_data_6 = test_blind_receive(&wallet_2);
+    let recipient_map = HashMap::from([
+        (
+            asset_1.asset_id.clone(),
+            vec![
+                Recipient {
+                    assignment: Assignment::Fungible(amount_1),
+                    recipient_id: receive_data_1.recipient_id.clone(),
+                    witness_data: None,
+                    transport_endpoints: TRANSPORT_ENDPOINTS.clone(),
+                },
+                Recipient {
+                    assignment: Assignment::Fungible(amount_2),
+                    recipient_id: receive_data_2.recipient_id.clone(),
+                    witness_data: None,
+                    transport_endpoints: TRANSPORT_ENDPOINTS.clone(),
+                },
+                Recipient {
+                    assignment: Assignment::Fungible(amount_3),
+                    recipient_id: receive_data_3.recipient_id.clone(),
+                    witness_data: None,
+                    transport_endpoints: TRANSPORT_ENDPOINTS.clone(),
+                },
+                Recipient {
+                    assignment: Assignment::Fungible(amount_4),
+                    recipient_id: receive_data_4.recipient_id.clone(),
+                    witness_data: None,
+                    transport_endpoints: TRANSPORT_ENDPOINTS.clone(),
+                },
+            ],
+        ),
+        (
+            asset_2.asset_id.clone(),
+            vec![
+                Recipient {
+                    assignment: Assignment::Fungible(amount_5),
+                    recipient_id: receive_data_5.recipient_id.clone(),
+                    witness_data: None,
+                    transport_endpoints: TRANSPORT_ENDPOINTS.clone(),
+                },
+                Recipient {
+                    assignment: Assignment::Fungible(amount_6),
+                    recipient_id: receive_data_6.recipient_id.clone(),
+                    witness_data: None,
+                    transport_endpoints: TRANSPORT_ENDPOINTS.clone(),
+                },
+            ],
+        ),
+    ]);
+    let txid = test_send(&mut wallet_1, &online_1, &recipient_map);
+    assert!(!txid.is_empty());
+    // settle transfers
+    test_refresh_all(&mut wallet_2, &online_2);
+    test_refresh_all(&mut wallet_1, &online_1);
+    mine(false, false);
+    test_refresh_all(&mut wallet_2, &online_2);
+    test_refresh_all(&mut wallet_1, &online_1);
+    show_unspent_colorings(&mut wallet_1, "wallet 1 after setup send");
+    show_unspent_colorings(&mut wallet_2, "wallet 2 after setup send");
+    // check received allocation colorings
+    let unspents_colorable = get_colorable_unspents(&mut wallet_2, Some(&online_2), false);
+    let amounts_all = amounts_user
+        .iter()
+        .chain(amounts_auto.iter())
+        .copied()
+        .collect::<Vec<u64>>();
+    check_allocations(&wallet_2, &unspents_colorable, &amounts_all, &[], false);
+
+    // send the 2 smallest allocations from wallet 2
+    let receive_data = test_blind_receive(&wallet_1);
+    let recipient_map = HashMap::from([(
+        asset_1.asset_id.clone(),
+        vec![Recipient {
+            assignment: Assignment::Fungible(amount_1 + amount_2),
+            recipient_id: receive_data.recipient_id.clone(),
+            witness_data: None,
+            transport_endpoints: TRANSPORT_ENDPOINTS.clone(),
+        }],
+    )]);
+    let txid = test_send(&mut wallet_2, &online_2, &recipient_map);
+    assert!(!txid.is_empty());
+    // check allocation colorings
+    // - main transition allocations have input colorings, user driven
+    // - extra transition allocations have input + change colorings, not user driven
+    show_unspent_colorings(&mut wallet_2, "wallet 2 after send (WaitingCounterparty)");
+    show_unspent_colorings(&mut wallet_1, "wallet 1 after send (WaitingCounterparty)");
+    let unspents_colorable = get_colorable_unspents(&mut wallet_2, Some(&online_2), false);
+    print_unspents(
+        &unspents_colorable,
+        "wallet 2 unspents after send (WaitingCounterparty)",
+    );
+    check_allocations(
+        &wallet_2,
+        &unspents_colorable,
+        &amounts_user,
+        &amounts_auto,
+        true,
+    );
+    // check unspent allocations (settled inputs, pending changes)
+    check_unspents(&unspents_colorable, &amounts_user, &amounts_auto, true);
+
+    // progress transfer to WaitingConfirmations
+    test_refresh_all(&mut wallet_1, &online_1);
+    test_refresh_all(&mut wallet_2, &online_2);
+    // check allocation colorings (same as in WaitingCounterparty)
+    show_unspent_colorings(&mut wallet_2, "wallet 2 after send (WaitingConfirmations)");
+    show_unspent_colorings(&mut wallet_1, "wallet 1 after send (WaitingConfirmations)");
+    let unspents_colorable = get_colorable_unspents(&mut wallet_2, Some(&online_2), false);
+    print_unspents(
+        &unspents_colorable,
+        "wallet 2 unspents after send (WaitingConfirmations)",
+    );
+    check_allocations(
+        &wallet_2,
+        &unspents_colorable,
+        &amounts_user,
+        &amounts_auto,
+        true,
+    );
+    // check unspent allocations (same as in WaitingCounterparty)
+    check_unspents(&unspents_colorable, &amounts_user, &amounts_auto, true);
+
+    // settle transfer
+    mine(false, false);
+    test_refresh_all(&mut wallet_1, &online_1);
+    test_refresh_all(&mut wallet_2, &online_2);
+    // check allocation colorings (no input colorings, same change colorings)
+    show_unspent_colorings(&mut wallet_2, "wallet 2 after send (Settled)");
+    show_unspent_colorings(&mut wallet_1, "wallet 1 after send (Settled)");
+    let unspents_colorable = get_colorable_unspents(&mut wallet_2, Some(&online_2), false);
+    print_unspents(
+        &unspents_colorable,
+        "wallet 2 unspents after send (Settled)",
+    );
+    check_allocations(
+        &wallet_2,
+        &unspents_colorable,
+        &amounts_user,
+        &amounts_auto,
+        false,
+    );
+    // check unspent allocations
+    check_unspents(&unspents_colorable, &amounts_user, &amounts_auto, false);
+
+    // send half of the smallest remaining allocation from wallet 2
+    let receive_data = test_blind_receive(&wallet_1);
+    let recipient_map = HashMap::from([(
+        asset_1.asset_id.clone(),
+        vec![Recipient {
+            assignment: Assignment::Fungible(amount_3 / 2),
+            recipient_id: receive_data.recipient_id.clone(),
+            witness_data: None,
+            transport_endpoints: TRANSPORT_ENDPOINTS.clone(),
+        }],
+    )]);
+    let txid = test_send(&mut wallet_2, &online_2, &recipient_map);
+    assert!(!txid.is_empty());
+    // check allocation colorings
+    // - main transition allocations have input colorings, user driven
+    // - extra transition allocations have input + change colorings, not user driven
+    show_unspent_colorings(
+        &mut wallet_2,
+        "wallet 2 after 2nd send (WaitingCounterparty)",
+    );
+    show_unspent_colorings(
+        &mut wallet_1,
+        "wallet 1 after 2nd send (WaitingCounterparty)",
+    );
+    let amounts_input = [amount_3, amount_4, amount_5, amount_6];
+    let amounts_change = [amount_3 / 2, amount_4, amount_5, amount_6];
+    let unspents_colorable = get_colorable_unspents(&mut wallet_2, Some(&online_2), false);
+    print_unspents(
+        &unspents_colorable,
+        "wallet 2 unspents after 2nd send (WaitingCounterparty)",
+    );
+    let coloring_map = get_coloring_map(&wallet_2, &unspents_colorable);
+    let db_batch_transfers = wallet_2.database.iter_batch_transfers().unwrap();
+    let db_asset_transfers = wallet_2.database.iter_asset_transfers().unwrap();
+    // check input colorings
+    let input_colorings: Vec<_> = coloring_map
+        .iter()
+        .flat_map(|(_, c)| c)
+        .filter(|c| c.r#type == ColoringType::Input)
+        .collect();
+    // - 4 colorings
+    assert_eq!(input_colorings.len(), 4);
+    for amt in amounts_input {
+        input_colorings
+            .iter()
+            .find(|c| c.assignment == Assignment::Fungible(amt))
+            .unwrap();
+    }
+    // - input for the main transition is user driven
+    assert!(
+        input_colorings
+            .iter()
+            .filter(|c| c.assignment == Assignment::Fungible(amount_3))
+            .all(|c| db_asset_transfers
+                .iter()
+                .find(|a| a.idx == c.asset_transfer_idx)
+                .unwrap()
+                .user_driven)
+    );
+    // - other inputs are not user driven
+    for amt in amounts_change {
+        assert!(
+            input_colorings
+                .iter()
+                .filter(|c| c.assignment == Assignment::Fungible(amt))
+                .all(|c| !db_asset_transfers
+                    .iter()
+                    .find(|a| a.idx == c.asset_transfer_idx)
+                    .unwrap()
+                    .user_driven)
+        );
+    }
+    // check change colorings
+    let change_colorings: Vec<_> = coloring_map
+        .iter()
+        .flat_map(|(_, c)| c)
+        .filter(|c| c.r#type == ColoringType::Change)
+        .filter(|c| {
+            db_batch_transfers
+                .iter()
+                .find(|b| {
+                    b.idx
+                        == db_asset_transfers
+                            .iter()
+                            .find(|a| a.idx == c.asset_transfer_idx)
+                            .unwrap()
+                            .batch_transfer_idx
+                })
+                .unwrap()
+                .pending()
+        })
+        .collect();
+    // - 4 pending ones
+    assert_eq!(change_colorings.len(), 4);
+    for amt in amounts_change {
+        change_colorings
+            .iter()
+            .find(|c| c.assignment == Assignment::Fungible(amt))
+            .unwrap();
+    }
+    // - change from the main transition is user driven
+    assert!(
+        change_colorings
+            .iter()
+            .filter(|c| c.assignment == Assignment::Fungible(amount_3 / 2))
+            .all(|c| db_asset_transfers
+                .iter()
+                .find(|a| a.idx == c.asset_transfer_idx)
+                .unwrap()
+                .user_driven)
+    );
+    // - other changes are not user driven
+    for amt in [amount_4, amount_5, amount_6] {
+        assert!(
+            change_colorings
+                .iter()
+                .filter(|c| c.assignment == Assignment::Fungible(amt))
+                .all(|c| !db_asset_transfers
+                    .iter()
+                    .find(|a| a.idx == c.asset_transfer_idx)
+                    .unwrap()
+                    .user_driven)
+        );
+    }
+}

@@ -408,22 +408,43 @@ pub(crate) fn get_test_transfer_related(
 
 pub(crate) fn list_test_unspents(wallet: &mut Wallet, msg: &str) -> Vec<Unspent> {
     let unspents = test_list_unspents(wallet, None, false);
-    println!(
-        "unspents for wallet {:?} {}: {}",
-        test_get_wallet_dir(wallet),
-        msg,
-        unspents.len()
-    );
-    for u in &unspents {
+    print_unspents(&unspents, msg);
+    unspents
+}
+
+pub(crate) fn get_colorable_unspents(
+    wallet: &mut Wallet,
+    online: Option<&Online>,
+    settled_only: bool,
+) -> Vec<Unspent> {
+    test_list_unspents(wallet, online, settled_only)
+        .into_iter()
+        .filter(|u| u.utxo.colorable)
+        .collect()
+}
+
+pub(crate) fn print_unspents(unspents: &[Unspent], msg: &str) {
+    println!("\n{msg} ({} unspents)", unspents.len());
+    for u in unspents {
         println!(
-            "- {:?} {:?} {:?}",
-            u.utxo.outpoint, u.utxo.btc_amount, u.utxo.colorable
+            "> {} {} {}",
+            u.utxo.outpoint,
+            u.utxo.btc_amount,
+            if u.utxo.colorable {
+                "colorable"
+            } else {
+                "vanilla"
+            }
         );
         for a in &u.rgb_allocations {
-            println!("  - {:?} {:?} {:?}", a.asset_id, a.assignment, a.settled);
+            println!(
+                "\t- {} {:?} {}",
+                a.asset_id.as_ref().unwrap(),
+                a.assignment,
+                if a.settled { "settled" } else { "pending" }
+            )
         }
     }
-    unspents
 }
 
 #[cfg(any(feature = "electrum", feature = "esplora"))]
