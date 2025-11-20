@@ -194,6 +194,7 @@ pub(crate) fn test_go_online_result(
     wallet.go_online(skip_consistency_check, electrum)
 }
 
+#[cfg(any(feature = "electrum", feature = "esplora"))]
 pub(crate) fn test_inflate(
     wallet: &mut Wallet,
     online: &Online,
