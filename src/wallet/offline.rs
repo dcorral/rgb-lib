@@ -896,15 +896,6 @@ impl From<OutPoint> for Outpoint {
     }
 }
 
-impl From<RgbOutpoint> for Outpoint {
-    fn from(x: RgbOutpoint) -> Outpoint {
-        Outpoint {
-            txid: x.txid.to_string(),
-            vout: x.vout.into_u32(),
-        }
-    }
-}
-
 impl From<DbTxo> for Outpoint {
     fn from(x: DbTxo) -> Outpoint {
         Outpoint {
@@ -917,18 +908,6 @@ impl From<DbTxo> for Outpoint {
 impl From<Outpoint> for OutPoint {
     fn from(x: Outpoint) -> OutPoint {
         OutPoint::from_str(&x.to_string()).expect("outpoint should be parsable")
-    }
-}
-
-impl From<DbTxo> for RgbOutpoint {
-    fn from(x: DbTxo) -> RgbOutpoint {
-        RgbOutpoint::new(RgbTxid::from_str(&x.txid).unwrap(), x.vout)
-    }
-}
-
-impl From<Outpoint> for RgbOutpoint {
-    fn from(x: Outpoint) -> RgbOutpoint {
-        RgbOutpoint::new(RgbTxid::from_str(&x.txid).unwrap(), x.vout)
     }
 }
 
@@ -1757,14 +1736,14 @@ impl Wallet {
         ContractTerms { text, media }
     }
 
-    pub(crate) fn get_blind_seal(&self, outpoint: impl Into<RgbOutpoint>) -> BlindSeal<RgbTxid> {
+    pub(crate) fn get_blind_seal(&self, outpoint: impl Into<OutPoint>) -> BlindSeal<RgbTxid> {
         let outpoint = outpoint.into();
         BlindSeal::new_random(outpoint.txid, outpoint.vout)
     }
 
     pub(crate) fn get_builder_seal(
         &self,
-        outpoint: impl Into<RgbOutpoint>,
+        outpoint: impl Into<OutPoint>,
     ) -> BuilderSeal<BlindSeal<RgbTxid>> {
         BuilderSeal::from(self.get_blind_seal(outpoint))
     }

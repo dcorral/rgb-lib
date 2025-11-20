@@ -1179,9 +1179,9 @@ impl Wallet {
         let resolver = match indexer {
             #[cfg(feature = "electrum")]
             Indexer::Electrum(_) => {
-                let electrum_config = BpElectrumConfig::builder()
-                    .timeout(Some(INDEXER_TIMEOUT))
+                let electrum_config = ConfigBuilder::new()
                     .retry(INDEXER_RETRIES)
+                    .timeout(Some(INDEXER_TIMEOUT))
                     .build();
                 AnyResolver::electrum_blocking(&indexer_url, Some(electrum_config)).map_err(
                     |e| Error::InvalidIndexer {
@@ -1191,13 +1191,10 @@ impl Wallet {
             }
             #[cfg(feature = "esplora")]
             Indexer::Esplora(_) => {
-                let esplora_config = BpEsploraConfig {
-                    proxy: None,
-                    timeout: Some(INDEXER_TIMEOUT.into()),
-                    max_retries: INDEXER_RETRIES as usize,
-                    headers: HashMap::new(),
-                };
-                AnyResolver::esplora_blocking(&indexer_url, Some(esplora_config)).map_err(|e| {
+                let esplora_config = EsploraBuilder::new(&indexer_url)
+                    .max_retries(INDEXER_RETRIES.into())
+                    .timeout(INDEXER_TIMEOUT.into());
+                AnyResolver::esplora_blocking(esplora_config).map_err(|e| {
                     Error::InvalidIndexer {
                         details: e.to_string(),
                     }
@@ -1648,13 +1645,9 @@ impl Wallet {
             if let Some(RecipientTypeFull::Witness { .. }) = transfer.recipient_type {
                 if let Some(vout) = vout {
                     if let PubWitness::Tx(tx) = &anchored_bundle.pub_witness {
-                        if let Some(output) = tx.outputs().nth(vout as usize) {
-                            let script_pubkey = ScriptPubkey::try_from(
-                                script_buf_from_recipient_id(recipient_id.clone())?
-                                    .unwrap()
-                                    .into_bytes(),
-                            )
-                            .unwrap();
+                        if let Some(output) = tx.output.get(vout as usize) {
+                            let script_pubkey =
+                                script_buf_from_recipient_id(recipient_id.clone())?.unwrap();
                             if output.script_pubkey != script_pubkey {
                                 error!(
                                     self.logger,
@@ -2555,30 +2548,22 @@ impl Wallet {
         let mut change_utxo_option = None;
         let mut change_utxo_idx = None;
 
-        let mut rgb_psbt = RgbPsbt::from_str(&psbt.to_string()).unwrap();
-
-        let prev_outputs = rgb_psbt
-            .inputs()
-            .map(|txin| txin.previous_outpoint)
-            .collect::<HashSet<RgbOutpoint>>();
-
-        let input_outpoints: Vec<Outpoint> = psbt
+        let prev_outputs = psbt
             .unsigned_tx
             .input
             .iter()
-            .map(|txin| Outpoint::from(txin.previous_output))
-            .collect();
+            .map(|txin| txin.previous_output)
+            .collect::<HashSet<OutPoint>>();
+
+        let input_outpoints: Vec<Outpoint> =
+            prev_outputs.iter().map(|o| Outpoint::from(*o)).collect();
 
         let mut all_transitions: HashMap<ContractId, Vec<Transition>> = HashMap::new();
         let mut asset_beneficiaries = bmap![];
         let mut extra_state = HashMap::<ContractId, Vec<(i32, Opout, AllocatedState)>>::new();
         let mut input_opouts: HashMap<ContractId, HashMap<Opout, AllocatedState>> = HashMap::new();
         for (asset_id, transfer_info) in transfer_info_map.iter_mut() {
-            let asset_utxos = transfer_info
-                .asset_spend
-                .txo_map
-                .values()
-                .map(|o| RgbOutpoint::from(o.clone()));
+            let asset_utxos = transfer_info.asset_spend.txo_map.values().cloned();
             let mut all_opout_state_vec = Vec::new();
             for (explicit_seal, opout_state_map) in runtime.contract_assignments_for(
                 transfer_info.asset_info.contract_id,
@@ -2734,8 +2719,7 @@ impl Wallet {
                 .entry(transfer_info.asset_info.contract_id)
                 .or_default()
                 .push(transition.clone());
-            rgb_psbt
-                .push_rgb_transition(transition)
+            psbt.push_rgb_transition(transition)
                 .map_err(InternalError::from)?;
             asset_beneficiaries.insert(asset_id.clone(), beneficiaries);
 
@@ -2796,44 +2780,29 @@ impl Wallet {
                     .entry(txo_idx)
                     .or_default()
                     .push(assignment);
-                rgb_psbt
-                    .push_rgb_transition(extra_transition)
+                psbt.push_rgb_transition(extra_transition)
                     .map_err(InternalError::from)?;
             }
         }
 
-        let opreturn_index = rgb_psbt
-            .to_unsigned_tx()
-            .outputs
-            .iter()
-            .enumerate()
-            .find(|(_, o)| o.script_pubkey.is_op_return())
-            .expect("psbt should have an op_return output")
-            .0;
-        rgb_psbt
-            .outputs_mut()
-            .nth(opreturn_index)
-            .unwrap()
-            .set_opret_host()
-            .map_err(InternalError::from)?;
+        psbt.set_opret_host();
 
         for (cid, transitions) in &all_transitions {
             for transition in transitions {
                 for opout in transition.inputs() {
-                    rgb_psbt
-                        .set_rgb_contract_consumer(*cid, opout, transition.id())
+                    psbt.set_rgb_contract_consumer(*cid, opout, transition.id())
                         .map_err(InternalError::from)?;
                 }
             }
         }
 
-        rgb_psbt.set_rgb_close_method(CloseMethod::OpretFirst);
-        rgb_psbt.complete_construction();
-        let fascia = rgb_psbt.rgb_commit().map_err(|e| Error::Internal {
+        psbt.set_rgb_close_method(CloseMethod::OpretFirst);
+        psbt.set_as_unmodifiable();
+        let fascia = psbt.rgb_commit().map_err(|e| Error::Internal {
             details: e.to_string(),
         })?;
 
-        let witness_txid = rgb_psbt.txid();
+        let witness_txid = psbt.get_txid();
 
         runtime.consume_fascia(fascia, witness_txid, None)?;
 
@@ -2918,8 +2887,6 @@ impl Wallet {
         }
 
         runtime.upsert_witness(witness_txid, WitnessOrd::Archived)?;
-
-        *psbt = Psbt::from_str(&rgb_psbt.to_string()).unwrap();
 
         // save batch transfer data to file (for send_end)
         let info_contents = InfoBatchTransfer {
@@ -3542,8 +3509,7 @@ impl Wallet {
                     }
                     Beneficiary::WitnessVout(pay_2_vout, _) => {
                         if let Some(ref witness_data) = recipient.witness_data {
-                            let script_buf =
-                                ScriptBuf::from_hex(&pay_2_vout.script_pubkey().to_hex()).unwrap();
+                            let script_buf = pay_2_vout.to_script();
                             witness_recipients.push((script_buf.clone(), witness_data.amount_sat));
                             let local_witness_data = LocalWitnessData {
                                 amount_sat: witness_data.amount_sat,

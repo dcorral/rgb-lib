@@ -559,7 +559,7 @@ pub(crate) enum InternalError {
     RgbPsbtError(String),
 
     #[error("Seal parse error: {0}")]
-    SealParse(#[from] seals::txout::explicit::ParseError),
+    SealParse(#[from] rgbstd::txout::explicit::ParseError),
 
     #[error("Serde JSON error: {0}")]
     SerdeJSON(#[from] serde_json::Error),

@@ -82,11 +82,11 @@ impl Wallet {
     /// it only if you know what you're doing</div>
     pub fn color_psbt(
         &self,
-        psbt_to_color: &mut Psbt,
+        psbt: &mut Psbt,
         coloring_info: ColoringInfo,
     ) -> Result<(Fascia, AssetBeneficiariesMap), Error> {
         info!(self.logger, "Coloring PSBT...");
-        let mut transaction = match psbt_to_color.clone().extract_tx() {
+        let mut transaction = match psbt.clone().extract_tx() {
             Ok(tx) => tx,
             Err(ExtractTxError::MissingInputValue { tx }) => tx, // required for non-standard TXs
             Err(e) => return Err(InternalError::from(e).into()),
@@ -96,7 +96,7 @@ impl Wallet {
             opreturn_first = true;
         }
 
-        let psbt = if !transaction
+        if !transaction
             .output
             .iter()
             .any(|o| o.script_pubkey.is_op_return())
@@ -110,19 +110,17 @@ impl Wallet {
             } else {
                 transaction.output.push(opreturn_output);
             }
-            Psbt::from_unsigned_tx(transaction).unwrap()
-        } else {
-            psbt_to_color.clone()
-        };
+            *psbt = Psbt::from_unsigned_tx(transaction).unwrap();
+        }
 
         let runtime = self.rgb_runtime()?;
 
-        let mut rgb_psbt = RgbPsbt::from_str(&psbt.to_string()).unwrap();
-
-        let prev_outputs = rgb_psbt
-            .inputs()
-            .map(|txin| txin.previous_outpoint)
-            .collect::<HashSet<RgbOutpoint>>();
+        let prev_outputs = psbt
+            .unsigned_tx
+            .input
+            .iter()
+            .map(|txin| txin.previous_output)
+            .collect::<HashSet<OutPoint>>();
 
         let mut all_transitions: HashMap<ContractId, Transition> = HashMap::new();
         let mut asset_beneficiaries: AssetBeneficiariesMap = bmap![];
@@ -161,7 +159,7 @@ impl Wallet {
                     vout += 1;
                 }
                 sending_amt += amount;
-                if vout as usize > rgb_psbt.outputs().count() {
+                if vout as usize > psbt.outputs.len() {
                     return Err(Error::InvalidColoringInfo {
                         details: s!("invalid vout in output_map, does not exist in the given PSBT"),
                     });
@@ -208,21 +206,16 @@ impl Wallet {
             asset_beneficiaries.insert(contract_id, beneficiaries);
         }
 
-        let (opreturn_index, _) = rgb_psbt
-            .to_unsigned_tx()
-            .outputs
+        let opreturn_index = psbt
+            .unsigned_tx
+            .output
             .iter()
             .enumerate()
             .find(|(_, o)| o.script_pubkey.is_op_return())
-            .expect("psbt should have an op_return output");
-        let (_, opreturn_output) = rgb_psbt
-            .outputs_mut()
-            .enumerate()
-            .find(|(i, _)| i == &opreturn_index)
-            .unwrap();
-        opreturn_output
-            .set_opret_host()
-            .map_err(InternalError::from)?;
+            .expect("psbt should have an op_return output")
+            .0;
+        let opreturn_output = psbt.outputs.get_mut(opreturn_index).unwrap();
+        opreturn_output.set_opret_host();
         if let Some(blinding) = coloring_info.static_blinding {
             opreturn_output
                 .set_mpc_entropy(blinding)
@@ -231,22 +224,18 @@ impl Wallet {
 
         for (contract_id, transition) in all_transitions {
             for opout in transition.inputs() {
-                rgb_psbt
-                    .set_rgb_contract_consumer(contract_id, opout, transition.id())
+                psbt.set_rgb_contract_consumer(contract_id, opout, transition.id())
                     .map_err(InternalError::from)?;
             }
-            rgb_psbt
-                .push_rgb_transition(transition)
+            psbt.push_rgb_transition(transition)
                 .map_err(InternalError::from)?;
         }
 
-        rgb_psbt.set_rgb_close_method(CloseMethod::OpretFirst);
-        rgb_psbt.complete_construction();
-        let fascia = rgb_psbt.rgb_commit().map_err(|e| Error::Internal {
+        psbt.set_rgb_close_method(CloseMethod::OpretFirst);
+        psbt.set_as_unmodifiable();
+        let fascia = psbt.rgb_commit().map_err(|e| Error::Internal {
             details: e.to_string(),
         })?;
-
-        *psbt_to_color = Psbt::from_str(&rgb_psbt.to_string()).unwrap();
 
         info!(self.logger, "Color PSBT completed");
         Ok((fascia, asset_beneficiaries))
@@ -258,15 +247,13 @@ impl Wallet {
     /// it only if you know what you're doing</div>
     pub fn color_psbt_and_consume(
         &self,
-        psbt_to_color: &mut Psbt,
+        psbt: &mut Psbt,
         coloring_info: ColoringInfo,
     ) -> Result<Vec<RgbTransfer>, Error> {
         info!(self.logger, "Coloring PSBT and consuming...");
-        let (fascia, asset_beneficiaries) =
-            self.color_psbt(psbt_to_color, coloring_info.clone())?;
+        let (fascia, asset_beneficiaries) = self.color_psbt(psbt, coloring_info.clone())?;
 
-        let rgb_psbt = RgbPsbt::from_str(&psbt_to_color.to_string()).unwrap();
-        let witness_txid = rgb_psbt.txid();
+        let witness_txid = psbt.get_txid();
 
         let mut runtime = self.rgb_runtime()?;
         runtime.consume_fascia(fascia, witness_txid, None)?;
@@ -293,8 +280,6 @@ impl Wallet {
                 Some(witness_txid),
             )?);
         }
-
-        *psbt_to_color = Psbt::from_str(&rgb_psbt.to_string()).unwrap();
 
         info!(self.logger, "Color PSBT and consume completed");
         Ok(transfers)

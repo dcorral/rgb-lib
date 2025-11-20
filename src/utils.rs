@@ -126,18 +126,6 @@ impl From<BitcoinNetwork> for ChainNet {
     }
 }
 
-impl From<BitcoinNetwork> for RgbNetwork {
-    fn from(x: BitcoinNetwork) -> RgbNetwork {
-        match x {
-            BitcoinNetwork::Mainnet => RgbNetwork::Mainnet,
-            BitcoinNetwork::Testnet => RgbNetwork::Testnet3,
-            BitcoinNetwork::Testnet4 => RgbNetwork::Testnet4,
-            BitcoinNetwork::Signet => RgbNetwork::Signet,
-            BitcoinNetwork::Regtest => RgbNetwork::Regtest,
-        }
-    }
-}
-
 #[cfg(not(target_os = "windows"))]
 pub(crate) fn adjust_canonicalization<P: AsRef<Path>>(p: P) -> String {
     p.as_ref().display().to_string()
@@ -428,10 +416,7 @@ pub fn script_buf_from_recipient_id(recipient_id: String) -> Result<Option<Scrip
         XChainNet::<Beneficiary>::from_str(&recipient_id).map_err(|_| Error::InvalidRecipientID)?;
     match xchainnet_beneficiary.into_inner() {
         Beneficiary::WitnessVout(pay_2_vout, _) => {
-            let script_pubkey = pay_2_vout.script_pubkey();
-            let script_bytes = script_pubkey.as_script_bytes();
-            let script_bytes_vec = script_bytes.clone().into_vec();
-            let script_buf = ScriptBuf::from_bytes(script_bytes_vec);
+            let script_buf = pay_2_vout.to_script();
             Ok(Some(script_buf))
         }
         Beneficiary::BlindedSeal(_) => Ok(None),
@@ -439,9 +424,7 @@ pub fn script_buf_from_recipient_id(recipient_id: String) -> Result<Option<Scrip
 }
 
 pub(crate) fn beneficiary_from_script_buf(script_buf: ScriptBuf) -> Beneficiary {
-    let address_payload =
-        AddressPayload::from_script(&ScriptPubkey::try_from(script_buf.into_bytes()).unwrap())
-            .unwrap();
+    let address_payload = AddressPayload::from_script(&script_buf).unwrap();
     Beneficiary::WitnessVout(Pay2Vout::new(address_payload), None)
 }
 
@@ -753,7 +736,7 @@ impl RgbRuntime {
     #[cfg_attr(not(any(feature = "electrum", feature = "esplora")), allow(dead_code))]
     pub(crate) fn contracts_assigning(
         &self,
-        outputs: impl IntoIterator<Item = impl Into<RgbOutpoint>>,
+        outputs: impl IntoIterator<Item = impl Into<OutPoint>>,
     ) -> Result<BTreeSet<ContractId>, InternalError> {
         Ok(FromIterator::from_iter(
             self.stock
@@ -789,7 +772,7 @@ impl RgbRuntime {
     pub(crate) fn contract_assignments_for(
         &self,
         contract_id: ContractId,
-        outpoints: impl IntoIterator<Item = impl Into<RgbOutpoint>>,
+        outpoints: impl IntoIterator<Item = impl Into<OutPoint>>,
     ) -> Result<HashMap<OutputSeal, HashMap<Opout, AllocatedState>>, InternalError> {
         self.stock
             .contract_assignments_for(contract_id, outpoints)

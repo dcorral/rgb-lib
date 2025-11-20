@@ -495,7 +495,7 @@ fn uda_with_preview_and_reserves() {
     };
     let proof = vec![2u8, 4u8, 6u8, 10u8];
     let reserves = RgbProofOfReserves {
-        utxo: RgbOutpoint::from_str(FAKE_TXID).unwrap(),
+        utxo: OutPoint::from_str(FAKE_TXID).unwrap(),
         proof: Confined::try_from(proof.clone()).unwrap(),
     };
     let token_data = TokenData {

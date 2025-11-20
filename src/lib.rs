@@ -104,18 +104,13 @@ use std::{
     time::Duration,
 };
 
-#[cfg(any(feature = "electrum", feature = "esplora"))]
-use amplify::hex::ToHex;
 use amplify::{Wrapper, bmap, confinement::Confined, s};
 #[cfg(any(feature = "electrum", feature = "esplora"))]
 use base64::{Engine as _, engine::general_purpose};
-use bc::{Outpoint as RgbOutpoint, ScriptPubkey};
 #[cfg(feature = "electrum")]
 use bdk_electrum::{
     BdkElectrumClient,
-    electrum_client::{
-        Client as ElectrumClient, ConfigBuilder, ElectrumApi, Error as ElectrumError, Param,
-    },
+    electrum_client::{Client as ElectrumClient, ElectrumApi, Error as ElectrumError, Param},
 };
 #[cfg(feature = "esplora")]
 use bdk_esplora::{
@@ -160,15 +155,9 @@ use chacha20poly1305::{
     Key, KeyInit, XChaCha20Poly1305,
     aead::{generic_array::GenericArray, stream},
 };
-use commit_verify::Conceal;
-#[cfg(feature = "electrum")]
-use electrum::Config as BpElectrumConfig;
-#[cfg(feature = "esplora")]
-use esplora::Config as BpEsploraConfig;
 use file_format::FileFormat;
 use futures::executor::block_on;
-use invoice::{AddressPayload, Network as RgbNetwork};
-use psrgbt::{Psbt as RgbPsbt, RgbExt, RgbPsbt as RgbPsbtTrait};
+use psrgbt::{RgbOutExt, RgbPsbtExt};
 use rand::{Rng, distr::Alphanumeric};
 #[cfg(any(feature = "electrum", feature = "esplora"))]
 use reqwest::{
@@ -178,7 +167,9 @@ use reqwest::{
 use rgb_lib_migration::{
     ArrayType, ColumnType, Migrator, MigratorTrait, Nullable, Value, ValueType, ValueTypeErr,
 };
-use rgbinvoice::{Beneficiary, RgbInvoice, RgbInvoiceBuilder, XChainNet};
+use rgbinvoice::{AddressPayload, Beneficiary, RgbInvoice, RgbInvoiceBuilder, XChainNet};
+#[cfg(feature = "electrum")]
+use rgbstd::indexers::electrum_blocking::ConfigBuilder;
 use rgbstd::{
     Allocation, Amount, ChainNet, Genesis, GraphSeal, Identity, Layer1, Operation, Opout,
     OutputSeal, OwnedFraction, Precision, Schema, SecretSeal, TokenIndex, Transition,
@@ -188,11 +179,13 @@ use rgbstd::{
     info::{ContractInfo, SchemaInfo},
     invoice::{InvoiceState, Pay2Vout},
     persistence::{MemContract, MemContractState, StashReadProvider, Stock, fs::FsBinStore},
+    rgbcore::commit_verify::Conceal,
     stl::{
         AssetSpec, Attachment, ContractTerms, Details, EmbeddedMedia as RgbEmbeddedMedia,
         MediaType, Name, ProofOfReserves as RgbProofOfReserves, RejectListUrl, RicardianContract,
         Ticker, TokenData,
     },
+    txout::{BlindSeal, CloseMethod, ExplicitSeal},
     validation::{
         ResolveWitness, Scripts, Status, WitnessOrdProvider, WitnessResolverError, WitnessStatus,
     },
@@ -204,6 +197,7 @@ use rgbstd::{
     contract::SchemaWrapper,
     daggy::Walker,
     indexers::AnyResolver,
+    txout::TxPtr,
     validation::{OpoutsDagData, ValidationConfig, ValidationError, Validity, Warning},
 };
 #[cfg(any(feature = "electrum", feature = "esplora"))]
@@ -222,9 +216,6 @@ use sea_orm::{
     DeriveActiveEnum, EntityTrait, EnumIter, IntoActiveValue, JsonValue, QueryFilter, QueryOrder,
     QueryResult, TryGetError, TryGetable, TryIntoModel,
 };
-#[cfg(any(feature = "electrum", feature = "esplora"))]
-use seals::txout::TxPtr;
-use seals::txout::{BlindSeal, CloseMethod, ExplicitSeal};
 use serde::de::{self, Unexpected, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use slog::{Drain, Logger, debug, error, info, o, warn};

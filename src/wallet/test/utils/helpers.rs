@@ -626,16 +626,16 @@ pub(crate) fn extract_opouts_from_transfer(
     let txo_indices = colorings.iter().map(|c| c.txo_idx).collect::<Vec<_>>();
     let db_txos = wallet.database.iter_txos().unwrap();
     let relevant_txos = db_txos.into_iter().filter(|t| txo_indices.contains(&t.idx));
-    let mut rgb_outpoints = relevant_txos
-        .map(|txo| RgbOutpoint::from(txo.clone()))
+    let mut outpoints = relevant_txos
+        .map(|txo| OutPoint::from(txo.clone()))
         .peekable();
-    if rgb_outpoints.peek().is_none() {
+    if outpoints.peek().is_none() {
         panic!("cannot find outpoints for this transfer");
     }
     let contract_id = ContractId::from_str(asset_id).unwrap();
     let runtime = wallet.rgb_runtime().unwrap();
     let assignments = runtime
-        .contract_assignments_for(contract_id, rgb_outpoints)
+        .contract_assignments_for(contract_id, outpoints)
         .unwrap();
     let mut opouts = Vec::new();
     for (_explicit_seal, opout_state_map) in assignments {
