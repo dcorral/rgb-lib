@@ -121,7 +121,7 @@ fn fail() {
     let result = test_send_btc_result(&mut wallet, &online, &test_get_address(&mut rcv_wallet), 0);
     assert!(matches!(result, Err(Error::OutputBelowDustLimit)));
 
-    // invalid fee rate
+    // invalid fee rate (low)
     let result = wallet.send_btc_begin(
         online.clone(),
         test_get_address(&mut rcv_wallet),
@@ -130,6 +130,16 @@ fn fail() {
         false,
     );
     assert!(matches!(result, Err(Error::InvalidFeeRate { details: m }) if m == FEE_MSG_LOW));
+
+    // invalid fee rate (overflow)
+    let result = wallet.send_btc_begin(
+        online.clone(),
+        test_get_address(&mut rcv_wallet),
+        amount,
+        u64::MAX,
+        false,
+    );
+    assert!(matches!(result, Err(Error::InvalidFeeRate { details: m }) if m == FEE_MSG_OVER));
 }
 
 #[cfg(feature = "electrum")]

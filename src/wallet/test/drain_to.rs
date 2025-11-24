@@ -165,6 +165,17 @@ fn fail() {
     );
     assert!(matches!(result, Err(Error::InvalidFeeRate { details: m }) if m == FEE_MSG_LOW));
 
+    // fee overflow
+    fund_wallet(test_get_address(&mut wallet));
+    let result = test_drain_to_begin_result(
+        &mut wallet,
+        &online,
+        &test_get_address(&mut rcv_wallet),
+        true,
+        u64::MAX,
+    );
+    assert!(matches!(result, Err(Error::InvalidFeeRate { details: m }) if m == FEE_MSG_OVER));
+
     // no private keys
     let (mut wallet, online) = get_funded_noutxo_wallet(false, None);
     let result = test_drain_to_result(

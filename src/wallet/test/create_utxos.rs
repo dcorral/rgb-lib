@@ -209,6 +209,11 @@ fn fail() {
     let result = test_create_utxos_begin_result(&mut wallet, &online, false, Some(1), None, 0);
     assert!(matches!(result, Err(Error::InvalidFeeRate { details: m }) if m == FEE_MSG_LOW));
 
+    // fee overflow
+    let result =
+        test_create_utxos_begin_result(&mut wallet, &online, false, Some(1), None, u64::MAX);
+    assert!(matches!(result, Err(Error::InvalidFeeRate { details: m }) if m == FEE_MSG_OVER));
+
     // invalid amount
     let result =
         test_create_utxos_begin_result(&mut wallet, &online, false, Some(1), Some(0), FEE_RATE);

@@ -2913,6 +2913,16 @@ fn fail() {
     );
     assert!(matches!(result, Err(Error::InvalidFeeRate { details: m }) if m == FEE_MSG_LOW));
 
+    // fee pverflow
+    let result = wallet.send_begin(
+        online.clone(),
+        recipient_map.clone(),
+        false,
+        u64::MAX,
+        MIN_CONFIRMATIONS,
+    );
+    assert!(matches!(result, Err(Error::InvalidFeeRate { details: m }) if m == FEE_MSG_OVER));
+
     // duplicated recipient ID
     let recipient_map = HashMap::from([(
         asset.asset_id.clone(),
