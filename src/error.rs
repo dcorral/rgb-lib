@@ -160,13 +160,6 @@ pub enum Error {
     #[error("Amount 0 is invalid")]
     InvalidAmountZero,
 
-    /// An invalid asset ID has been provided
-    #[error("Invalid asset ID: {asset_id}")]
-    InvalidAssetID {
-        /// Asset ID
-        asset_id: String,
-    },
-
     /// An invalid assignment has been provided
     #[error("Invalid assignment")]
     InvalidAssignment,
