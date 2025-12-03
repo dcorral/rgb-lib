@@ -34,7 +34,7 @@ jobs:
         with:
           toolchain: ${{matrix.toolchain}}
       - name: Build with default features
-        run: cargo build --all-features
+        run: cargo build --release --all-features
 
   build_no_default_features:
     timeout-minutes: 30
@@ -55,7 +55,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Build with no default features
-        run: cargo build --no-default-features
+        run: cargo build --release --no-default-features
 
   build_feature_electrum:
     timeout-minutes: 30
@@ -76,7 +76,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Build with electrum feature
-        run: cargo build --no-default-features --features electrum
+        run: cargo build --release --no-default-features --features electrum
 
   build_feature_esplora:
     timeout-minutes: 30
@@ -97,4 +97,4 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Build with esplora feature
-        run: cargo build --no-default-features --features esplora
+        run: cargo build --release --no-default-features --features esplora
