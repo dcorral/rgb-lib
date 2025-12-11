@@ -349,6 +349,8 @@ pub struct AssetUDA {
     pub added_at: i64,
     /// Current balance of the asset
     pub balance: Balance,
+    /// Asset media attachment
+    pub media: Option<Media>,
     /// Asset unique token
     pub token: Option<TokenLight>,
 }
@@ -363,7 +365,19 @@ impl AssetUDA {
         batch_transfers: Option<Vec<DbBatchTransfer>>,
         colorings: Option<Vec<DbColoring>>,
         txos: Option<Vec<DbTxo>>,
+        medias: Option<Vec<DbMedia>>,
     ) -> Result<AssetUDA, Error> {
+        let media = {
+            let medias = if let Some(m) = medias {
+                m
+            } else {
+                wallet.database.iter_media()?
+            };
+            medias
+                .iter()
+                .find(|m| Some(m.idx) == asset.media_idx)
+                .map(|m| Media::from_db_media(m, wallet.get_media_dir()))
+        };
         let balance = wallet.database.get_asset_balance(
             asset.id.clone(),
             transfers,
@@ -381,6 +395,7 @@ impl AssetUDA {
             timestamp: asset.timestamp,
             added_at: asset.added_at,
             balance,
+            media,
             token,
         })
     }
@@ -1975,7 +1990,10 @@ impl Wallet {
 
         let created_at = now().unix_timestamp();
         let text = RicardianContract::default();
-        let terms = ContractTerms { text, media: None };
+        #[cfg(test)]
+        let terms = mock_asset_terms(self, text, None);
+        #[cfg(not(test))]
+        let terms = self.new_asset_terms(text, None);
 
         let details_obj = if let Some(details) = &details {
             Some(self.check_details(details.clone())?)
@@ -2127,8 +2145,17 @@ impl Wallet {
             )?;
         }
 
-        let asset =
-            AssetUDA::get_asset_details(self, &asset, Some(token), None, None, None, None, None)?;
+        let asset = AssetUDA::get_asset_details(
+            self,
+            &asset,
+            Some(token),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )?;
 
         self.update_backup_info(false)?;
 
@@ -3293,6 +3320,7 @@ impl Wallet {
                                     batch_transfers.clone(),
                                     colorings.clone(),
                                     txos.clone(),
+                                    medias.clone(),
                                 )
                             })
                             .collect::<Result<Vec<AssetUDA>, Error>>()?,

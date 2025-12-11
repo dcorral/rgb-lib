@@ -479,6 +479,100 @@ fn nia_with_details() {
 #[cfg(feature = "electrum")]
 #[test]
 #[serial]
+fn uda_with_media() {
+    initialize();
+
+    let file_str = "README.md";
+
+    let (mut wallet_1, online_1) = get_funded_wallet!();
+    let (mut wallet_2, online_2) = get_funded_wallet!();
+    let (mut wallet_3, online_3) = get_funded_wallet!();
+
+    let fp = ["tests", "qrcode.png"].join(MAIN_SEPARATOR_STR);
+    let fpath = std::path::Path::new(&fp);
+    let file_bytes = std::fs::read(fp.clone()).unwrap();
+    let file_hash: sha256::Hash = Sha256Hash::hash(&file_bytes[..]);
+    let digest = file_hash.to_byte_array();
+    let mime = FileFormat::from_file(fpath)
+        .unwrap()
+        .media_type()
+        .to_string();
+    let media_ty: &'static str = Box::leak(mime.clone().into_boxed_str());
+    let media_type = MediaType::with(media_ty);
+    let attachment = Attachment {
+        ty: media_type,
+        digest: digest.into(),
+    };
+    println!("setting MOCK_CONTRACT_DATA");
+    MOCK_CONTRACT_DATA.lock().unwrap().push(attachment.clone());
+    let asset = test_issue_asset_uda(&mut wallet_1, &online_1, None, Some(file_str), vec![]);
+    let media_idx = wallet_1
+        .copy_media_and_save(
+            fp,
+            &Media::from_attachment(&attachment, wallet_1.get_media_dir()),
+        )
+        .unwrap();
+    let db_asset = wallet_1
+        .database
+        .get_asset(asset.asset_id.clone())
+        .unwrap()
+        .unwrap();
+    let mut updated_asset: DbAssetActMod = db_asset.into();
+    updated_asset.media_idx = ActiveValue::Set(Some(media_idx));
+    wallet_1.database.update_asset(&mut updated_asset).unwrap();
+
+    let receive_data = test_blind_receive(&wallet_2);
+    let recipient_map = HashMap::from([(
+        asset.asset_id.clone(),
+        vec![Recipient {
+            assignment: Assignment::NonFungible,
+            recipient_id: receive_data.recipient_id.clone(),
+            witness_data: None,
+            transport_endpoints: TRANSPORT_ENDPOINTS.clone(),
+        }],
+    )]);
+    let txid = test_send(&mut wallet_1, &online_1, &recipient_map);
+    assert!(!txid.is_empty());
+
+    wait_for_refresh(&mut wallet_2, &online_2, None, None);
+    let assets_list = test_list_assets(&wallet_2, &[]);
+    assert!(assets_list.uda.unwrap()[0].media.is_some());
+    wait_for_refresh(&mut wallet_1, &online_1, None, None);
+    mine(false, false);
+    wait_for_refresh(&mut wallet_2, &online_2, None, None);
+    wait_for_refresh(&mut wallet_1, &online_1, None, None);
+
+    let receive_data = test_blind_receive(&wallet_3);
+    let recipient_map = HashMap::from([(
+        asset.asset_id,
+        vec![Recipient {
+            assignment: Assignment::NonFungible,
+            recipient_id: receive_data.recipient_id.clone(),
+            witness_data: None,
+            transport_endpoints: TRANSPORT_ENDPOINTS.clone(),
+        }],
+    )]);
+    let txid = test_send(&mut wallet_2, &online_2, &recipient_map);
+    assert!(!txid.is_empty());
+
+    wait_for_refresh(&mut wallet_3, &online_3, None, None);
+    let assets_list = test_list_assets(&wallet_3, &[]);
+    assert!(assets_list.uda.unwrap()[0].media.is_some());
+    wait_for_refresh(&mut wallet_2, &online_2, None, None);
+    mine(false, false);
+    wait_for_refresh(&mut wallet_3, &online_3, None, None);
+    wait_for_refresh(&mut wallet_2, &online_2, None, None);
+    let rcv_transfer = get_test_transfer_recipient(&wallet_3, &receive_data.recipient_id);
+    let (rcv_transfer_data, _) = get_test_transfer_data(&wallet_3, &rcv_transfer);
+    let (transfer, _, _) = get_test_transfer_sender(&wallet_2, &txid);
+    let (transfer_data, _) = get_test_transfer_data(&wallet_2, &transfer);
+    assert_eq!(rcv_transfer_data.status, TransferStatus::Settled);
+    assert_eq!(transfer_data.status, TransferStatus::Settled);
+}
+
+#[cfg(feature = "electrum")]
+#[test]
+#[serial]
 fn uda_with_preview_and_reserves() {
     initialize();
 

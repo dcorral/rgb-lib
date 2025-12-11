@@ -536,6 +536,14 @@ impl Wallet {
                 let details = spec.details().map(|d| d.to_string());
                 let precision = spec.precision.into();
                 let initial_supply = 1;
+                let media_idx = if let Some(attachment) = contract.contract_terms().media {
+                    Some(self.get_or_insert_media(
+                        hex::encode(attachment.digest),
+                        attachment.ty.to_string(),
+                    )?)
+                } else {
+                    None
+                };
                 let token_full =
                     Token::from_token_data(&contract.token_data(), self.get_media_dir());
                 (
@@ -544,7 +552,7 @@ impl Wallet {
                         precision,
                         ticker: Some(ticker),
                         details,
-                        media_idx: None,
+                        media_idx,
                         initial_supply,
                         max_supply: None,
                         known_circulating_supply: None,

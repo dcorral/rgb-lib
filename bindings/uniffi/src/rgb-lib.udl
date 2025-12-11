@@ -146,6 +146,7 @@ dictionary AssetUDA {
   i64 timestamp;
   i64 added_at;
   Balance balance;
+  Media? media;
   TokenLight? token;
 };
 
