@@ -4,7 +4,7 @@ use super::*;
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize, EnumIter, DeriveActiveEnum,
 )]
-#[sea_orm(rs_type = "u16", db_type = "Integer")]
+#[sea_orm(rs_type = "u8", db_type = "TinyUnsigned")]
 pub enum AssetSchema {
     /// NIA schema
     #[sea_orm(num_value = 1)]
@@ -128,7 +128,7 @@ impl From<AssetSchema> for SchemaId {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, EnumIter, DeriveActiveEnum)]
-#[sea_orm(rs_type = "u16", db_type = "Integer")]
+#[sea_orm(rs_type = "u8", db_type = "TinyUnsigned")]
 pub enum ColoringType {
     #[sea_orm(num_value = 1)]
     Receive = 1,
@@ -216,7 +216,7 @@ impl Nullable for RecipientTypeFull {
 
 /// The type of an RGB transport.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, EnumIter, DeriveActiveEnum, Deserialize, Serialize)]
-#[sea_orm(rs_type = "u16", db_type = "Integer")]
+#[sea_orm(rs_type = "u8", db_type = "TinyUnsigned")]
 pub enum TransportType {
     /// HTTP(s) JSON-RPC ([specification](https://github.com/RGB-Tools/rgb-http-json-rpc))
     #[sea_orm(num_value = 1)]
@@ -237,7 +237,7 @@ pub enum TransportType {
     Deserialize,
     Serialize,
 )]
-#[sea_orm(rs_type = "u16", db_type = "Integer")]
+#[sea_orm(rs_type = "u8", db_type = "TinyUnsigned")]
 pub enum TransferStatus {
     /// Waiting for the counterparty to take action
     #[sea_orm(num_value = 1)]
@@ -280,7 +280,7 @@ impl TransferStatus {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, EnumIter, DeriveActiveEnum)]
-#[sea_orm(rs_type = "u16", db_type = "Integer")]
+#[sea_orm(rs_type = "u8", db_type = "TinyUnsigned")]
 pub enum WalletTransactionType {
     #[sea_orm(num_value = 1)]
     CreateUtxos = 1,
