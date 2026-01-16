@@ -511,8 +511,9 @@ fn check_indexer_url_electrum_fail() {
     initialize();
 
     let result = check_indexer_url(ELECTRUM_BLOCKSTREAM_URL, BitcoinNetwork::Regtest);
-    let verbose_unsupported = s!("verbose transactions are currently unsupported");
-    assert_matches!(result, Err(Error::InvalidElectrum { details: m }) if m == verbose_unsupported);
+    let verbose_unsupported =
+        "verbose transactions are unsupported by the provided electrum service";
+    assert_matches!(result, Err(Error::InvalidIndexer { details: m }) if m.contains(verbose_unsupported));
 }
 
 #[cfg(feature = "esplora")]

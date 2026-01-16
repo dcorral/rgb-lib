@@ -247,28 +247,6 @@ pub(crate) fn get_genesis_hash(bitcoin_network: &BitcoinNetwork) -> &str {
     }
 }
 
-#[cfg(feature = "electrum")]
-fn get_valid_txid_for_network(bitcoin_network: &BitcoinNetwork) -> String {
-    match bitcoin_network {
-        BitcoinNetwork::Mainnet => {
-            "33e794d097969002ee05d336686fc03c9e15a597c1b9827669460fac98799036"
-        }
-        BitcoinNetwork::Testnet => {
-            "5e6560fd518aadbed67ee4a55bdc09f19e619544f5511e9343ebba66d2f62653"
-        }
-        BitcoinNetwork::Testnet4 => {
-            "7aa0a7ae1e223414cb807e40cd57e667b718e42aaf9306db9102fe28912b7b4e"
-        }
-        BitcoinNetwork::Signet => {
-            "8153034f45e695453250a8fb7225a5e545144071d8ed7b0d3211efa1f3c92ad8"
-        }
-        BitcoinNetwork::Regtest => {
-            "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"
-        }
-    }
-    .to_string()
-}
-
 pub(crate) fn str_to_xpub(xpub: &str, bdk_network: BdkNetwork) -> Result<Xpub, Error> {
     let pubkey_btc = Xpub::from_str(xpub)?;
     let extended_key_btc: ExtendedKey = ExtendedKey::from(pubkey_btc);
@@ -504,19 +482,6 @@ pub(crate) fn calculate_descriptor_from_xpub(
 }
 
 #[cfg(any(feature = "electrum", feature = "esplora"))]
-fn check_genesis_hash(bitcoin_network: &BitcoinNetwork, indexer: &Indexer) -> Result<(), Error> {
-    let expected = get_genesis_hash(bitcoin_network);
-    let block_hash = indexer.block_hash(0)?;
-    if expected != block_hash {
-        return Err(Error::InvalidIndexer {
-            details: s!("indexer is for a network different from the wallet's one"),
-        });
-    }
-
-    Ok(())
-}
-
-#[cfg(any(feature = "electrum", feature = "esplora"))]
 pub(crate) fn get_rest_client() -> Result<RestClient, Error> {
     RestClient::builder()
         .timeout(Duration::from_secs(REST_CLIENT_TIMEOUT as u64))
@@ -554,10 +519,10 @@ pub(crate) fn check_proxy(proxy_url: &str, rest_client: Option<&RestClient>) -> 
 }
 
 #[cfg(any(feature = "electrum", feature = "esplora"))]
-pub(crate) fn get_indexer(
+pub(crate) fn get_indexer_and_resolver(
     indexer_url: &str,
     bitcoin_network: BitcoinNetwork,
-) -> Result<Indexer, Error> {
+) -> Result<(Indexer, AnyResolver), Error> {
     // detect indexer type
     let indexer = build_indexer(indexer_url);
     let mut invalid_indexer = true;
@@ -571,20 +536,37 @@ pub(crate) fn get_indexer(
     }
     let indexer = indexer.unwrap();
 
-    // check the indexer server is for the correct network
-    check_genesis_hash(&bitcoin_network, &indexer)?;
+    let resolver = match indexer {
+        #[cfg(feature = "electrum")]
+        Indexer::Electrum(_) => {
+            let electrum_config = ConfigBuilder::new()
+                .retry(INDEXER_RETRIES)
+                .timeout(Some(INDEXER_TIMEOUT))
+                .build();
+            AnyResolver::electrum_blocking(indexer_url, Some(electrum_config)).map_err(|e| {
+                Error::InvalidIndexer {
+                    details: e.to_string(),
+                }
+            })?
+        }
+        #[cfg(feature = "esplora")]
+        Indexer::Esplora(_) => {
+            let esplora_config = EsploraBuilder::new(indexer_url)
+                .max_retries(INDEXER_RETRIES.into())
+                .timeout(INDEXER_TIMEOUT.into());
+            AnyResolver::esplora_blocking(esplora_config).map_err(|e| Error::InvalidIndexer {
+                details: e.to_string(),
+            })?
+        }
+    };
 
-    #[cfg(feature = "electrum")]
-    if matches!(indexer, Indexer::Electrum(_)) {
-        // check the electrum server has the required functionality (verbose transactions)
-        indexer
-            .get_tx_confirmations(&get_valid_txid_for_network(&bitcoin_network))
-            .map_err(|_| Error::InvalidElectrum {
-                details: s!("verbose transactions are currently unsupported"),
-            })?;
-    }
+    resolver
+        .check_chain_net(bitcoin_network.into())
+        .map_err(|e| Error::InvalidIndexer {
+            details: e.to_string(),
+        })?;
 
-    Ok(indexer)
+    Ok((indexer, resolver))
 }
 
 #[cfg(any(feature = "electrum", feature = "esplora"))]

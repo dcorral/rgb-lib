@@ -1173,34 +1173,8 @@ impl Wallet {
             indexer_url: indexer_url.clone(),
         };
 
-        let indexer = get_indexer(&indexer_url, self.bitcoin_network())?;
+        let (indexer, resolver) = get_indexer_and_resolver(&indexer_url, self.bitcoin_network())?;
         indexer.populate_tx_cache(&self.bdk_wallet);
-
-        let resolver = match indexer {
-            #[cfg(feature = "electrum")]
-            Indexer::Electrum(_) => {
-                let electrum_config = ConfigBuilder::new()
-                    .retry(INDEXER_RETRIES)
-                    .timeout(Some(INDEXER_TIMEOUT))
-                    .build();
-                AnyResolver::electrum_blocking(&indexer_url, Some(electrum_config)).map_err(
-                    |e| Error::InvalidIndexer {
-                        details: e.to_string(),
-                    },
-                )?
-            }
-            #[cfg(feature = "esplora")]
-            Indexer::Esplora(_) => {
-                let esplora_config = EsploraBuilder::new(&indexer_url)
-                    .max_retries(INDEXER_RETRIES.into())
-                    .timeout(INDEXER_TIMEOUT.into());
-                AnyResolver::esplora_blocking(esplora_config).map_err(|e| {
-                    Error::InvalidIndexer {
-                        details: e.to_string(),
-                    }
-                })?
-            }
-        };
 
         let online_data = OnlineData {
             id: online.id,

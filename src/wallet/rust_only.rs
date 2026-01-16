@@ -53,7 +53,7 @@ pub fn check_indexer_url(
     indexer_url: &str,
     bitcoin_network: BitcoinNetwork,
 ) -> Result<IndexerProtocol, Error> {
-    let indexer = get_indexer(indexer_url, bitcoin_network)?;
+    let (indexer, _) = get_indexer_and_resolver(indexer_url, bitcoin_network)?;
     let indexer_protocol = match indexer {
         #[cfg(feature = "electrum")]
         Indexer::Electrum(_) => IndexerProtocol::Electrum,

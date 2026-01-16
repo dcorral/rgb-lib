@@ -246,8 +246,8 @@ use crate::{
     database::{DbData, LocalRecipient, LocalRecipientData, LocalWitnessData},
     error::IndexerError,
     utils::{
-        INDEXER_RETRIES, INDEXER_STOP_GAP, INDEXER_TIMEOUT, OffchainResolver, check_proxy,
-        get_indexer, get_rest_client, script_buf_from_recipient_id,
+        INDEXER_STOP_GAP, OffchainResolver, check_proxy, get_indexer_and_resolver, get_rest_client,
+        script_buf_from_recipient_id,
     },
     wallet::{AssignmentsCollection, Indexer},
 };
