@@ -47,6 +47,7 @@ EXPOSED_PORTS=(3000 50001)  # see compose.yaml for the exposed ports
 TIMEOUT=100
 
 BCLI="$COMPOSE exec -T -u blits bitcoind bitcoin-cli -regtest"
+BCLI_SIGNET="$COMPOSE exec -T -u blits bitcoind_signet_custom bitcoin-cli -signet"
 BCLI_ESPLORA="$COMPOSE exec -T esplora cli"
 
 _prepare_bitcoin_funds() {
@@ -57,6 +58,8 @@ _prepare_bitcoin_funds() {
         # connect the 2 bitcoind services
         $BCLI addnode "esplora:18444" "add"
         $BCLI_ESPLORA addnode "bitcoind:18444" "add"
+        $BCLI_SIGNET createwallet miner
+        $BCLI_SIGNET -rpcwallet=miner generatetoaddress 1 "$($BCLI_SIGNET getnewaddress)" 100000000
     fi
 }
 
@@ -149,7 +152,7 @@ prepare_tests_environment() {
     TESTS=1
 
     COMPOSE="$COMPOSE --profile tests"
-    EXPOSED_PORTS+=(3001 3002 50002 50003 50004 8094)
+    EXPOSED_PORTS+=(3001 3002 50002 50003 50004 50005 8094)
 
     PROXY_MOD_PROTO="proxy-mod-proto"
     PROXY_MOD_API="proxy-mod-api"
@@ -163,6 +166,8 @@ prepare_tests_environment() {
 
     _wait_for_bitcoind bitcoind
 
+    _wait_for_bitcoind bitcoind_signet_custom
+
     _prepare_bitcoin_funds
 
     _wait_for_electrs electrs
@@ -170,6 +175,8 @@ prepare_tests_environment() {
     _wait_for_electrs electrs-2
 
     _wait_for_electrs electrs-blockstream
+
+    _wait_for_electrs electrs_signet_custom
 
     _wait_for_esplora esplora
 

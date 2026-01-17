@@ -49,6 +49,7 @@ static TRANSPORT_ENDPOINTS: Lazy<Vec<String>> = Lazy::new(|| vec![PROXY_ENDPOINT
 const ELECTRUM_URL: &str = "127.0.0.1:50001";
 const ELECTRUM_2_URL: &str = "127.0.0.1:50002";
 const ELECTRUM_BLOCKSTREAM_URL: &str = "127.0.0.1:50003";
+const ELECTRUM_SIGNET_CUSTOM_URL: &str = "127.0.0.1:50005";
 const ESPLORA_URL: &str = "http://127.0.0.1:8094/regtest/api";
 const TEST_DATA_DIR_PARTS: [&str; 2] = ["tests", "tmp"];
 const LISTS_DIR_PARTS: [&str; 2] = ["tests", "lists"];

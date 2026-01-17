@@ -3,13 +3,13 @@ services:
     image: registry.gitlab.com/hashbeam/docker/bitcoind:30.0
     command: "-fallbackfee=0.0002"
   electrs:
-    image: registry.gitlab.com/hashbeam/docker/electrs:0.10.10
+    image: registry.gitlab.com/hashbeam/docker/electrs:0.11.0
     ports:
       - 50001:50001
     depends_on:
       - bitcoind
   electrs-2:
-    image: registry.gitlab.com/hashbeam/docker/electrs:0.10.10
+    image: registry.gitlab.com/hashbeam/docker/electrs:0.11.0
     profiles: ['tests']
     ports:
       - 50002:50001
@@ -67,3 +67,22 @@ services:
       - 8140:80
     volumes:
       - ./lists:/usr/share/nginx/html/lists:ro
+  bitcoind_signet_custom:
+    image: registry.gitlab.com/hashbeam/docker/bitcoind:30.0
+    profiles: ['tests']
+    command: "-signet -signetchallenge=51 -fallbackfee=0.0002"
+    environment:
+      NETWORK: signet
+  electrs_signet_custom:
+    image: registry.gitlab.com/hashbeam/docker/electrs:0.11.0
+    profiles: ['tests']
+    environment:
+      BTCHOST: bitcoind_signet_custom
+      NETWORK: signet
+      BTCRPCPORT: 38332
+      BTCP2PPORT: 38333
+      SIGNET_MAGIC: 54d26fbd
+    ports:
+      - 50005:50001
+    depends_on:
+      - bitcoind_signet_custom

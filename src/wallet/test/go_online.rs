@@ -88,6 +88,19 @@ fn fail() {
 #[cfg(feature = "electrum")]
 #[test]
 #[parallel]
+fn invalid_chain_net() {
+    initialize();
+
+    // URL for custom signet but wallet for default signet
+    let mut wallet_signet = get_test_wallet_with_net(true, None, BitcoinNetwork::Signet);
+    let result = test_go_online_result(&mut wallet_signet, false, Some(ELECTRUM_SIGNET_CUSTOM_URL));
+    let details = "unable to retrieve information from the resolver";
+    assert!(matches!(result, Err(Error::InvalidIndexer { details: m }) if m.contains(details) ));
+}
+
+#[cfg(feature = "electrum")]
+#[test]
+#[parallel]
 fn consistency_check_fail_bitcoins() {
     initialize();
 
