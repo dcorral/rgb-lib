@@ -127,6 +127,7 @@ use bdk_wallet::{
         Address as BdkAddress, Amount as BdkAmount, BlockHash, Network as BdkNetwork, NetworkKind,
         OutPoint, OutPoint as BdkOutPoint, ScriptBuf, TxOut,
         bip32::{ChildNumber, DerivationPath, Fingerprint, KeySource, Xpriv, Xpub},
+        constants::ChainHash,
         hashes::{Hash as Sha256Hash, sha256},
         psbt::{ExtractTxError, Psbt},
         secp256k1::Secp256k1,
@@ -169,7 +170,7 @@ use rgb_lib_migration::{
 };
 use rgbinvoice::{AddressPayload, Beneficiary, RgbInvoice, RgbInvoiceBuilder, XChainNet};
 #[cfg(feature = "electrum")]
-use rgbstd::indexers::electrum_blocking::ConfigBuilder;
+use rgbstd::indexers::electrum_blocking::electrum_client::ConfigBuilder;
 use rgbstd::{
     Allocation, Amount, ChainNet, Genesis, GraphSeal, Identity, Layer1, Operation, Opout,
     OutputSeal, OwnedFraction, Precision, Schema, SecretSeal, TokenIndex, Transition,
@@ -285,8 +286,8 @@ use crate::{
     utils::{
         DumbResolver, LOG_FILE, RgbRuntime, adjust_canonicalization, beneficiary_from_script_buf,
         from_str_or_number_mandatory, from_str_or_number_optional, get_account_xpubs,
-        get_descriptors, get_descriptors_from_xpubs, get_genesis_hash, load_rgb_runtime, now,
-        parse_address_str, setup_logger, str_to_xpub,
+        get_descriptors, get_descriptors_from_xpubs, load_rgb_runtime, now, parse_address_str,
+        setup_logger, str_to_xpub,
     },
     wallet::{
         Balance, NUM_KNOWN_SCHEMAS, Outpoint, SCHEMA_ID_CFA, SCHEMA_ID_IFA, SCHEMA_ID_NIA,

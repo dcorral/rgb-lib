@@ -1312,12 +1312,13 @@ impl Wallet {
             )?;
             (desc_colored, desc_vanilla, true)
         };
+        let chain_net: ChainNet = wdata.bitcoin_network.into();
         let mut wallet_params = BdkWallet::load()
             .descriptor(KeychainKind::External, Some(desc_colored.clone()))
             .descriptor(KeychainKind::Internal, Some(desc_vanilla.clone()))
-            .check_genesis_hash(
-                BlockHash::from_str(get_genesis_hash(&wdata.bitcoin_network)).unwrap(),
-            );
+            .check_genesis_hash(BlockHash::from_byte_array(
+                chain_net.chain_hash().to_bytes(),
+            ));
         let bdk_db_name = if watch_only {
             format!("{BDK_DB_NAME}_watch_only")
         } else {

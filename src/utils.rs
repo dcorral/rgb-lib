@@ -45,10 +45,12 @@ pub enum BitcoinNetwork {
     Testnet,
     /// Bitcoin's testnet4
     Testnet4,
-    /// Bitcoin's signet
+    /// Bitcoin's default signet
     Signet,
     /// Bitcoin's regtest
     Regtest,
+    /// Bitcoin's custom signet
+    SignetCustom([u8; 32]),
 }
 
 impl fmt::Display for BitcoinNetwork {
@@ -61,7 +63,15 @@ impl FromStr for BitcoinNetwork {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(match s.to_lowercase().as_str() {
+        let s = s.to_lowercase();
+        if let Some(hash) = s.strip_prefix("signet-") {
+            return BlockHash::from_str(hash)
+                .map(|h| BitcoinNetwork::SignetCustom(*h.as_ref()))
+                .map_err(|_| Error::InvalidBitcoinNetwork {
+                    network: s.to_owned(),
+                });
+        }
+        Ok(match s.as_str() {
             "mainnet" | "bitcoin" => BitcoinNetwork::Mainnet,
             "testnet" | "testnet3" => BitcoinNetwork::Testnet,
             "testnet4" => BitcoinNetwork::Testnet4,
@@ -86,6 +96,7 @@ impl TryFrom<ChainNet> for BitcoinNetwork {
             ChainNet::BitcoinTestnet4 => Ok(BitcoinNetwork::Testnet4),
             ChainNet::BitcoinSignet => Ok(BitcoinNetwork::Signet),
             ChainNet::BitcoinRegtest => Ok(BitcoinNetwork::Regtest),
+            ChainNet::BitcoinSignetCustom(h) => Ok(BitcoinNetwork::SignetCustom(*h.as_ref())),
             _ => Err(Error::UnsupportedLayer1 {
                 layer_1: x.layer1().to_string(),
             }),
@@ -101,6 +112,7 @@ impl From<BitcoinNetwork> for bitcoin::Network {
             BitcoinNetwork::Testnet4 => bitcoin::Network::Testnet4,
             BitcoinNetwork::Signet => bitcoin::Network::Signet,
             BitcoinNetwork::Regtest => bitcoin::Network::Regtest,
+            BitcoinNetwork::SignetCustom(_) => bitcoin::Network::Signet,
         }
     }
 }
@@ -122,6 +134,7 @@ impl From<BitcoinNetwork> for ChainNet {
             BitcoinNetwork::Testnet4 => ChainNet::BitcoinTestnet4,
             BitcoinNetwork::Signet => ChainNet::BitcoinSignet,
             BitcoinNetwork::Regtest => ChainNet::BitcoinRegtest,
+            BitcoinNetwork::SignetCustom(h) => ChainNet::BitcoinSignetCustom(ChainHash::from(h)),
         }
     }
 }
@@ -225,26 +238,6 @@ where
     T::Err: fmt::Display,
 {
     deserialize_str_or_number(deserializer)
-}
-
-pub(crate) fn get_genesis_hash(bitcoin_network: &BitcoinNetwork) -> &str {
-    match bitcoin_network {
-        BitcoinNetwork::Mainnet => {
-            "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"
-        }
-        BitcoinNetwork::Testnet => {
-            "000000000933ea01ad0ee984209779baaec3ced90fa3f408719526f8d77f4943"
-        }
-        BitcoinNetwork::Testnet4 => {
-            "00000000da84f2bafbbc53dee25a72ae507ff4914b867c565be350b0da8bf043"
-        }
-        BitcoinNetwork::Signet => {
-            "00000008819873e925422c1ff0f99f7cc9bbb232af63a077a480a3633bee1ef6"
-        }
-        BitcoinNetwork::Regtest => {
-            "0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206"
-        }
-    }
 }
 
 pub(crate) fn str_to_xpub(xpub: &str, bdk_network: BdkNetwork) -> Result<Xpub, Error> {

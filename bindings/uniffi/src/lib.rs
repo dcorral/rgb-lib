@@ -6,8 +6,8 @@ use std::{
 };
 
 use rgb_lib::{
-    AssetSchema, Assignment as RgbLibAssignment, BitcoinNetwork, Error as RgbLibError,
-    RecipientType, TransferStatus, TransportType,
+    AssetSchema, Assignment as RgbLibAssignment, BitcoinNetwork as RgbLibBitcoinNetwork,
+    Error as RgbLibError, RecipientType, TransferStatus, TransportType,
     keys::Keys,
     wallet::{
         Address as RgbLibAddress, AssetCFA, AssetIFA, AssetNIA, AssetUDA, Assets,
@@ -18,11 +18,55 @@ use rgb_lib::{
         RefreshedTransfer, RgbAllocation as RgbLibRgbAllocation, Token, TokenLight, Transaction,
         TransactionType, Transfer as RgbLibTransfer, TransferKind, TransferTransportEndpoint,
         TransportEndpoint as RgbLibTransportEndpoint, Unspent as RgbLibUnspent, Utxo,
-        Wallet as RgbLibWallet, WalletData, WitnessData,
+        Wallet as RgbLibWallet, WalletData as RgbLibWalletData, WitnessData,
     },
 };
 
 uniffi::include_scaffolding!("rgb-lib");
+
+// temporary solution needed because the Enum attribute doesn't support the Remote one
+pub enum BitcoinNetwork {
+    Mainnet,
+    Testnet,
+    Testnet4,
+    Signet,
+    Regtest,
+    SignetCustom { genesis_hash: Vec<u8> },
+}
+impl From<RgbLibBitcoinNetwork> for BitcoinNetwork {
+    fn from(orig: RgbLibBitcoinNetwork) -> Self {
+        match orig {
+            RgbLibBitcoinNetwork::Mainnet => BitcoinNetwork::Mainnet,
+            RgbLibBitcoinNetwork::Testnet => BitcoinNetwork::Testnet,
+            RgbLibBitcoinNetwork::Testnet4 => BitcoinNetwork::Testnet4,
+            RgbLibBitcoinNetwork::Signet => BitcoinNetwork::Signet,
+            RgbLibBitcoinNetwork::Regtest => BitcoinNetwork::Regtest,
+            RgbLibBitcoinNetwork::SignetCustom(genesis_hash) => BitcoinNetwork::SignetCustom {
+                genesis_hash: genesis_hash.to_vec(),
+            },
+        }
+    }
+}
+impl TryFrom<BitcoinNetwork> for RgbLibBitcoinNetwork {
+    type Error = RgbLibError;
+
+    fn try_from(orig: BitcoinNetwork) -> Result<Self, Self::Error> {
+        Ok(match orig {
+            BitcoinNetwork::Mainnet => RgbLibBitcoinNetwork::Mainnet,
+            BitcoinNetwork::Testnet => RgbLibBitcoinNetwork::Testnet,
+            BitcoinNetwork::Testnet4 => RgbLibBitcoinNetwork::Testnet4,
+            BitcoinNetwork::Signet => RgbLibBitcoinNetwork::Signet,
+            BitcoinNetwork::Regtest => RgbLibBitcoinNetwork::Regtest,
+            BitcoinNetwork::SignetCustom { genesis_hash } => {
+                RgbLibBitcoinNetwork::SignetCustom(genesis_hash.try_into().map_err(|_| {
+                    RgbLibError::InvalidBitcoinNetwork {
+                        network: "SignetCustom".to_string(),
+                    }
+                })?)
+            }
+        })
+    }
+}
 
 // temporary solution needed because the Enum attribute doesn't support the Remote one
 pub enum Assignment {
@@ -72,24 +116,26 @@ impl From<RgbLibInvoiceData> for InvoiceData {
             asset_id: orig.asset_id,
             assignment: orig.assignment.into(),
             assignment_name: orig.assignment_name,
-            network: orig.network,
+            network: orig.network.into(),
             expiration_timestamp: orig.expiration_timestamp,
             transport_endpoints: orig.transport_endpoints,
         }
     }
 }
-impl From<InvoiceData> for RgbLibInvoiceData {
-    fn from(orig: InvoiceData) -> Self {
-        RgbLibInvoiceData {
+impl TryFrom<InvoiceData> for RgbLibInvoiceData {
+    type Error = RgbLibError;
+
+    fn try_from(orig: InvoiceData) -> Result<Self, Self::Error> {
+        Ok(RgbLibInvoiceData {
             recipient_id: orig.recipient_id,
             asset_schema: orig.asset_schema,
             asset_id: orig.asset_id,
             assignment: orig.assignment.into(),
             assignment_name: orig.assignment_name,
-            network: orig.network,
+            network: orig.network.try_into()?,
             expiration_timestamp: orig.expiration_timestamp,
             transport_endpoints: orig.transport_endpoints,
-        }
+        })
     }
 }
 pub struct Recipient {
@@ -226,13 +272,59 @@ impl From<Unspent> for RgbLibUnspent {
         }
     }
 }
+pub struct WalletData {
+    pub data_dir: String,
+    pub bitcoin_network: BitcoinNetwork,
+    pub database_type: DatabaseType,
+    pub max_allocations_per_utxo: u32,
+    pub account_xpub_vanilla: String,
+    pub account_xpub_colored: String,
+    pub mnemonic: Option<String>,
+    pub master_fingerprint: String,
+    pub vanilla_keychain: Option<u8>,
+    pub supported_schemas: Vec<AssetSchema>,
+}
+impl From<RgbLibWalletData> for WalletData {
+    fn from(orig: RgbLibWalletData) -> Self {
+        Self {
+            data_dir: orig.data_dir,
+            bitcoin_network: orig.bitcoin_network.into(),
+            database_type: orig.database_type,
+            max_allocations_per_utxo: orig.max_allocations_per_utxo,
+            account_xpub_vanilla: orig.account_xpub_vanilla,
+            account_xpub_colored: orig.account_xpub_colored,
+            mnemonic: orig.mnemonic,
+            master_fingerprint: orig.master_fingerprint,
+            vanilla_keychain: orig.vanilla_keychain,
+            supported_schemas: orig.supported_schemas,
+        }
+    }
+}
+impl TryFrom<WalletData> for RgbLibWalletData {
+    type Error = RgbLibError;
 
-fn generate_keys(bitcoin_network: BitcoinNetwork) -> Keys {
-    rgb_lib::generate_keys(bitcoin_network)
+    fn try_from(orig: WalletData) -> Result<Self, Self::Error> {
+        Ok(Self {
+            data_dir: orig.data_dir,
+            bitcoin_network: orig.bitcoin_network.try_into()?,
+            database_type: orig.database_type,
+            max_allocations_per_utxo: orig.max_allocations_per_utxo,
+            account_xpub_vanilla: orig.account_xpub_vanilla,
+            account_xpub_colored: orig.account_xpub_colored,
+            mnemonic: orig.mnemonic,
+            master_fingerprint: orig.master_fingerprint,
+            vanilla_keychain: orig.vanilla_keychain,
+            supported_schemas: orig.supported_schemas,
+        })
+    }
+}
+
+fn generate_keys(bitcoin_network: BitcoinNetwork) -> Result<Keys, RgbLibError> {
+    Ok(rgb_lib::generate_keys(bitcoin_network.try_into()?))
 }
 
 fn restore_keys(bitcoin_network: BitcoinNetwork, mnemonic: String) -> Result<Keys, RgbLibError> {
-    rgb_lib::restore_keys(bitcoin_network, mnemonic)
+    rgb_lib::restore_keys(bitcoin_network.try_into()?, mnemonic)
 }
 
 fn restore_backup(
@@ -259,7 +351,7 @@ impl RecipientInfo {
     }
 
     fn network(&self) -> BitcoinNetwork {
-        self._get_recipient_info().network
+        self._get_recipient_info().network.into()
     }
 
     fn recipient_type(&self) -> RecipientType {
@@ -294,7 +386,10 @@ struct Address {
 impl Address {
     fn new(address_string: String, bitcoin_network: BitcoinNetwork) -> Result<Self, RgbLibError> {
         Ok(Address {
-            _address: RwLock::new(RgbLibAddress::new(address_string, bitcoin_network)?),
+            _address: RwLock::new(RgbLibAddress::new(
+                address_string,
+                bitcoin_network.try_into()?,
+            )?),
         })
     }
 }
@@ -330,7 +425,7 @@ struct Wallet {
 impl Wallet {
     fn new(wallet_data: WalletData) -> Result<Self, RgbLibError> {
         Ok(Wallet {
-            wallet_mutex: Mutex::new(RgbLibWallet::new(wallet_data)?),
+            wallet_mutex: Mutex::new(RgbLibWallet::new(wallet_data.try_into()?)?),
         })
     }
 
@@ -339,7 +434,7 @@ impl Wallet {
     }
 
     fn get_wallet_data(&self) -> WalletData {
-        self._get_wallet().get_wallet_data()
+        self._get_wallet().get_wallet_data().into()
     }
 
     fn get_wallet_dir(&self) -> String {
