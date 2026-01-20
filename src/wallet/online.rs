@@ -2771,7 +2771,6 @@ impl Wallet {
         }
 
         psbt.set_rgb_close_method(CloseMethod::OpretFirst);
-        psbt.set_as_unmodifiable();
         let fascia = psbt.rgb_commit().map_err(|e| Error::Internal {
             details: e.to_string(),
         })?;
