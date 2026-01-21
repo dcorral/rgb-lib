@@ -2725,8 +2725,8 @@ impl Wallet {
     /// medium. The list needs to contain at least 1 endpoint and a maximum of 3. Strings
     /// specifying invalid endpoints and duplicate ones will cause an error to be raised. A valid
     /// endpoint string encodes an
-    /// [`RgbTransport`](https://docs.rs/rgb-wallet/latest/rgbwallet/enum.RgbTransport.html). At
-    /// the moment the only supported variant is JsonRpc (e.g. `rpc://127.0.0.1` or
+    /// [`RgbTransport`](https://docs.rs/rgb-invoicing/latest/rgbinvoice/enum.RgbTransport.html).
+    /// At the moment the only supported variant is JsonRpc (e.g. `rpc://127.0.0.1` or
     /// `rpcs://example.com`).
     ///
     /// The `min_confirmations` number determines the minimum number of confirmations needed for
@@ -2808,8 +2808,8 @@ impl Wallet {
     /// medium. The list needs to contain at least 1 endpoint and a maximum of 3. Strings
     /// specifying invalid endpoints and duplicate ones will cause an error to be raised. A valid
     /// endpoint string encodes an
-    /// [`RgbTransport`](https://docs.rs/rgb-wallet/latest/rgbwallet/enum.RgbTransport.html). At
-    /// the moment the only supported variant is JsonRpc (e.g. `rpc://127.0.0.1` or
+    /// [`RgbTransport`](https://docs.rs/rgb-invoicing/latest/rgbinvoice/enum.RgbTransport.html).
+    /// At the moment the only supported variant is JsonRpc (e.g. `rpc://127.0.0.1` or
     /// `rpcs://example.com`).
     ///
     /// The `min_confirmations` number determines the minimum number of confirmations needed for
