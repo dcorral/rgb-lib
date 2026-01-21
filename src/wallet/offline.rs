@@ -1675,10 +1675,6 @@ impl Wallet {
             acc.checked_add(*x).ok_or(Error::TooHighInflationAmounts)
         })?;
 
-        if issued_supply == 0 && total_inflation == 0 {
-            return Err(Error::NoIssuanceAmounts);
-        }
-
         if inflation_amounts.is_empty() {
             return Ok(0);
         }
@@ -2377,6 +2373,9 @@ impl Wallet {
 
         let settled = self._get_total_issue_amount(&amounts, true)?;
         let inflation_amt = self.get_total_inflation_amount(&inflation_amounts, settled)?;
+        if settled == 0 && inflation_amt == 0 {
+            return Err(Error::NoIssuanceAmounts);
+        }
         let max_supply = settled + inflation_amt;
 
         let db_data = self.database.get_db_data(false)?;
