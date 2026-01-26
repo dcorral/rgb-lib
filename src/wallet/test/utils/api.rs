@@ -234,6 +234,7 @@ pub(crate) fn test_inflate(
     test_inflate_result(wallet, online, asset_id, inflation_amounts).unwrap()
 }
 
+#[cfg(any(feature = "electrum", feature = "esplora"))]
 pub(crate) fn test_inflate_result(
     wallet: &mut Wallet,
     online: &Online,
@@ -249,6 +250,7 @@ pub(crate) fn test_inflate_result(
     )
 }
 
+#[cfg(any(feature = "electrum", feature = "esplora"))]
 pub(crate) fn test_inflate_begin(
     wallet: &mut Wallet,
     online: &Online,
@@ -258,6 +260,7 @@ pub(crate) fn test_inflate_begin(
     test_inflate_begin_result(wallet, online, asset_id, inflation_amounts).unwrap()
 }
 
+#[cfg(any(feature = "electrum", feature = "esplora"))]
 pub(crate) fn test_inflate_begin_result(
     wallet: &mut Wallet,
     online: &Online,
@@ -273,6 +276,7 @@ pub(crate) fn test_inflate_begin_result(
     )
 }
 
+#[cfg(any(feature = "electrum", feature = "esplora"))]
 pub(crate) fn test_inflate_end_result(
     wallet: &mut Wallet,
     online: &Online,
