@@ -100,7 +100,7 @@ use std::{
     panic,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::Arc,
+    sync::{Arc, LazyLock},
     time::Duration,
 };
 
@@ -157,7 +157,6 @@ use chacha20poly1305::{
     aead::{generic_array::GenericArray, stream},
 };
 use file_format::FileFormat;
-use futures::executor::block_on;
 use psrgbt::{RgbOutExt, RgbPsbtExt};
 use rand::{Rng, distr::Alphanumeric};
 #[cfg(any(feature = "electrum", feature = "esplora"))]
@@ -294,3 +293,24 @@ use crate::{
         SCHEMA_ID_UDA,
     },
 };
+
+// sea-orm with runtime-tokio-rustls needs a tokio runtime for connection pool management
+static TOKIO_RUNTIME: LazyLock<tokio::runtime::Runtime> =
+    LazyLock::new(|| tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime"));
+
+pub(crate) fn block_on<F>(future: F) -> F::Output
+where
+    F: std::future::Future + Send,
+    F::Output: Send,
+{
+    if tokio::runtime::Handle::try_current().is_ok() {
+        // Already inside a runtime - spawn thread without tokio context
+        std::thread::scope(|s| {
+            s.spawn(|| TOKIO_RUNTIME.block_on(future))
+                .join()
+                .expect("rgb-lib block_on thread panicked")
+        })
+    } else {
+        TOKIO_RUNTIME.block_on(future)
+    }
+}
