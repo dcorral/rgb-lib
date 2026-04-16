@@ -15,6 +15,7 @@ fn reuse_returns_same_address() {
             max_allocations_per_utxo: MAX_ALLOCATIONS_PER_UTXO,
             supported_schemas: AssetSchema::VALUES.to_vec(),
             reuse_addresses: true,
+            script_type: ScriptType::default(),
         },
         SinglesigKeys::from_keys(&keys, None),
     )
@@ -47,6 +48,7 @@ fn rotate_changes_address() {
             max_allocations_per_utxo: MAX_ALLOCATIONS_PER_UTXO,
             supported_schemas: AssetSchema::VALUES.to_vec(),
             reuse_addresses: true,
+            script_type: ScriptType::default(),
         },
         SinglesigKeys::from_keys(&keys, None),
     )
@@ -85,6 +87,7 @@ fn send_btc_change_reuses_address() {
             max_allocations_per_utxo: MAX_ALLOCATIONS_PER_UTXO,
             supported_schemas: AssetSchema::VALUES.to_vec(),
             reuse_addresses: true,
+            script_type: ScriptType::default(),
         },
         SinglesigKeys::from_keys(&keys, None),
     )

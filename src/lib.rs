@@ -40,7 +40,7 @@
 //! ### Create an RGB singlesig wallet
 //! ```
 //! use rgb_lib::keys::generate_keys;
-//! use rgb_lib::wallet::{DatabaseType, SinglesigKeys, Wallet, WalletData};
+//! use rgb_lib::wallet::{DatabaseType, ScriptType, SinglesigKeys, Wallet, WalletData};
 //! use rgb_lib::{AssetSchema, BitcoinNetwork};
 //!
 //! fn main() -> Result<(), rgb_lib::Error> {
@@ -54,6 +54,7 @@
 //!         max_allocations_per_utxo: 5,
 //!         supported_schemas: vec![AssetSchema::Nia],
 //!         reuse_addresses: false,
+//!         script_type: ScriptType::default(),
 //!     };
 //!     let wallet = Wallet::new(wallet_data, single_sig_keys)?;
 //!
@@ -88,7 +89,9 @@ pub use crate::{
     error::Error,
     keys::{generate_keys, restore_keys},
     utils::{BitcoinNetwork, block_on},
-    wallet::{RecipientType, TransactionType, TransferKind, Wallet, backup::restore_backup},
+    wallet::{
+        RecipientType, ScriptType, TransactionType, TransferKind, Wallet, backup::restore_backup,
+    },
 };
 #[cfg(feature = "mpc")]
 pub use mpc::MpcWalletProvider;

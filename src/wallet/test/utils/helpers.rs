@@ -60,6 +60,7 @@ pub(crate) fn get_test_wallet_data(data_dir: &str) -> WalletData {
         max_allocations_per_utxo: MAX_ALLOCATIONS_PER_UTXO,
         supported_schemas: AssetSchema::VALUES.to_vec(),
         reuse_addresses: false,
+        script_type: ScriptType::default(),
     }
 }
 
@@ -99,6 +100,7 @@ pub(crate) fn get_test_wallet_raw(
             max_allocations_per_utxo: max_allocations_per_utxo.unwrap_or(MAX_ALLOCATIONS_PER_UTXO),
             supported_schemas: AssetSchema::VALUES.to_vec(),
             reuse_addresses: false,
+            script_type: ScriptType::default(),
         },
         wallet_keys.clone(),
     )
@@ -114,6 +116,29 @@ pub(crate) fn get_test_wallet(private_keys: bool, max_allocations_per_utxo: Opti
         max_allocations_per_utxo,
         BitcoinNetwork::Regtest,
     )
+}
+
+#[cfg(any(feature = "electrum", feature = "esplora"))]
+pub(crate) fn get_funded_wallet_p2wpkh() -> (Wallet, Online) {
+    create_test_data_dir();
+    let keys = generate_keys_with_script_type(BitcoinNetwork::Regtest, ScriptType::P2wpkh);
+    let mut wallet = Wallet::new(
+        WalletData {
+            data_dir: get_test_data_dir_string(),
+            bitcoin_network: BitcoinNetwork::Regtest,
+            database_type: DatabaseType::Sqlite,
+            max_allocations_per_utxo: MAX_ALLOCATIONS_PER_UTXO,
+            supported_schemas: AssetSchema::VALUES.to_vec(),
+            reuse_addresses: false,
+            script_type: ScriptType::P2wpkh,
+        },
+        SinglesigKeys::from_keys(&keys, None),
+    )
+    .unwrap();
+    let online = wallet.go_online(true, ELECTRUM_URL.to_string()).unwrap();
+    fund_wallet(wallet.get_address().unwrap());
+    test_create_utxos_default(&mut wallet, online);
+    (wallet, online)
 }
 
 #[cfg(any(feature = "electrum", feature = "esplora"))]

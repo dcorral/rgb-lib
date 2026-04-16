@@ -137,6 +137,7 @@ fn scenario_4_5_interrupt_during_chunked_upload_keeps_baseline_atomic() {
             max_allocations_per_utxo: MAX_ALLOCATIONS_PER_UTXO,
             supported_schemas: vec![AssetSchema::Nia],
             reuse_addresses: false,
+            script_type: ScriptType::default(),
         },
         wallet_keys,
     )

@@ -14,8 +14,8 @@ use std::fs;
 use std::path::Path;
 
 use rgb_lib::wallet::{
-    DatabaseType, Online, Recipient, RgbWalletOpsOffline, RgbWalletOpsOnline, SinglesigKeys,
-    Wallet, WalletData,
+    DatabaseType, Online, Recipient, RgbWalletOpsOffline, RgbWalletOpsOnline, ScriptType,
+    SinglesigKeys, Wallet, WalletData,
 };
 use rgb_lib::{AssetSchema, Assignment, BitcoinNetwork, generate_keys};
 
@@ -126,6 +126,7 @@ fn open_wallet(state: &PeerState) -> Wallet {
         max_allocations_per_utxo: 5,
         supported_schemas: vec![AssetSchema::Nia],
         reuse_addresses: false,
+        script_type: ScriptType::default(),
     };
     let keys = SinglesigKeys {
         account_xpub_vanilla: state

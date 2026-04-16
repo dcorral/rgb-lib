@@ -23,7 +23,7 @@ use std::env;
 use std::fs;
 use std::path::Path;
 
-use rgb_lib::wallet::{DatabaseType, MpcWallet, Online, Recipient, WalletData};
+use rgb_lib::wallet::{DatabaseType, MpcWallet, Online, Recipient, ScriptType, WalletData};
 use rgb_lib::{AssetSchema, Assignment, BitcoinNetwork, DfnsConfig, DfnsProvider};
 
 // ---------------------------------------------------------------------------
@@ -193,6 +193,7 @@ fn open_wallet(data_dir: &str) -> MpcWallet {
         max_allocations_per_utxo: 5,
         supported_schemas: vec![AssetSchema::Nia],
         reuse_addresses: false,
+        script_type: ScriptType::default(),
     };
     MpcWallet::new(
         wallet_data,

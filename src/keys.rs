@@ -21,7 +21,17 @@ pub struct Keys {
 }
 
 /// Generate a set of [`Keys`] for the given Bitcoin network.
+///
+/// Uses P2TR (taproot, purpose 86) derivation paths by default.
 pub fn generate_keys(bitcoin_network: BitcoinNetwork) -> Keys {
+    generate_keys_with_script_type(bitcoin_network, ScriptType::default())
+}
+
+/// Generate a set of [`Keys`] for the given Bitcoin network and script type.
+pub fn generate_keys_with_script_type(
+    bitcoin_network: BitcoinNetwork,
+    script_type: ScriptType,
+) -> Keys {
     let bdk_network = BdkNetwork::from(bitcoin_network);
     let mnemonic = Mnemonic::generate((WordCount::Words12, Language::English))
         .expect("to be able to generate a new mnemonic");
@@ -32,7 +42,7 @@ pub fn generate_keys(bitcoin_network: BitcoinNetwork) -> Keys {
     let xpub = &xkey.into_xpub(bdk_network, &Secp256k1::new());
     let mnemonic_str = mnemonic.to_string();
     let (account_xpub_vanilla, account_xpub_colored) =
-        get_account_xpubs(&bitcoin_network, &mnemonic_str).unwrap();
+        get_account_xpubs(&bitcoin_network, &mnemonic_str, script_type.purpose()).unwrap();
     let master_fingerprint = xpub.fingerprint().to_string();
     Keys {
         mnemonic: mnemonic_str,
@@ -44,10 +54,21 @@ pub fn generate_keys(bitcoin_network: BitcoinNetwork) -> Keys {
 }
 
 /// Recreate a set of [`Keys`] from the given mnemonic phrase.
+///
+/// Uses P2TR (taproot, purpose 86) derivation paths by default.
 pub fn restore_keys(bitcoin_network: BitcoinNetwork, mnemonic: String) -> Result<Keys, Error> {
+    restore_keys_with_script_type(bitcoin_network, mnemonic, ScriptType::default())
+}
+
+/// Recreate a set of [`Keys`] from the given mnemonic phrase for the given script type.
+pub fn restore_keys_with_script_type(
+    bitcoin_network: BitcoinNetwork,
+    mnemonic: String,
+    script_type: ScriptType,
+) -> Result<Keys, Error> {
     let bdk_network = BdkNetwork::from(bitcoin_network);
     let (account_xpub_vanilla, account_xpub_colored) =
-        get_account_xpubs(&bitcoin_network, &mnemonic)?;
+        get_account_xpubs(&bitcoin_network, &mnemonic, script_type.purpose())?;
     let mnemonic_parsed = Mnemonic::parse_in(Language::English, &mnemonic)?;
     let xkey: ExtendedKey = mnemonic_parsed
         .clone()
@@ -107,5 +128,34 @@ mod test {
         assert_eq!(keys.master_fingerprint, master_fingerprint);
         assert_eq!(keys.account_xpub_colored, account_xpub_colored);
         assert_eq!(keys.account_xpub_vanilla, account_xpub_vanilla);
+    }
+
+    #[test]
+    fn p2wpkh_and_p2tr_keys_differ() {
+        let network = BitcoinNetwork::Regtest;
+        let keys_tr = generate_keys_with_script_type(network, ScriptType::P2tr);
+        let keys_wpkh =
+            restore_keys_with_script_type(network, keys_tr.mnemonic.clone(), ScriptType::P2wpkh)
+                .unwrap();
+
+        // same master xpub and fingerprint (same mnemonic)
+        assert_eq!(keys_tr.xpub, keys_wpkh.xpub);
+        assert_eq!(keys_tr.master_fingerprint, keys_wpkh.master_fingerprint);
+        // but different account xpubs (different purpose in derivation path)
+        assert_ne!(keys_tr.account_xpub_colored, keys_wpkh.account_xpub_colored);
+        assert_ne!(keys_tr.account_xpub_vanilla, keys_wpkh.account_xpub_vanilla);
+
+        // restore round-trip for P2WPKH
+        let restored =
+            restore_keys_with_script_type(network, keys_wpkh.mnemonic.clone(), ScriptType::P2wpkh)
+                .unwrap();
+        assert_eq!(
+            restored.account_xpub_colored,
+            keys_wpkh.account_xpub_colored
+        );
+        assert_eq!(
+            restored.account_xpub_vanilla,
+            keys_wpkh.account_xpub_vanilla
+        );
     }
 }

@@ -15,7 +15,8 @@ fn check_wallet(wallet: &Wallet, network: BitcoinNetwork, keychain_vanilla: Opti
                         .unwrap()
                         .to_string();
                     let coin_type = get_coin_type(&network, true);
-                    let account_derivation_children = get_account_derivation_children(coin_type);
+                    let account_derivation_children =
+                        get_account_derivation_children(PURPOSE, coin_type);
                     let expected_full_derivation_path =
                         get_extended_derivation_path(account_derivation_children, KEYCHAIN_RGB);
                     assert_eq!(
@@ -33,7 +34,8 @@ fn check_wallet(wallet: &Wallet, network: BitcoinNetwork, keychain_vanilla: Opti
                         .unwrap()
                         .to_string();
                     let coin_type = get_coin_type(&network, false);
-                    let account_derivation_children = get_account_derivation_children(coin_type);
+                    let account_derivation_children =
+                        get_account_derivation_children(PURPOSE, coin_type);
                     let keychain_vanilla = keychain_vanilla.unwrap_or(KEYCHAIN_BTC);
                     let expected_full_derivation_path =
                         get_extended_derivation_path(account_derivation_children, keychain_vanilla);
@@ -75,6 +77,7 @@ fn success() {
             max_allocations_per_utxo: MAX_ALLOCATIONS_PER_UTXO,
             supported_schemas: AssetSchema::VALUES.to_vec(),
             reuse_addresses: false,
+            script_type: ScriptType::default(),
         },
         SinglesigKeys::from_keys(&keys, vanilla_keychain),
     )
@@ -163,6 +166,7 @@ fn mainnet_esplora_success() {
             max_allocations_per_utxo: MAX_ALLOCATIONS_PER_UTXO,
             supported_schemas: vec![AssetSchema::Cfa, AssetSchema::Nia, AssetSchema::Uda],
             reuse_addresses: false,
+            script_type: ScriptType::default(),
         },
         SinglesigKeys::from_keys(&keys, None),
     )
@@ -194,6 +198,7 @@ fn mainnet_electrum_success() {
             // IFA not supported on mainnet
             supported_schemas: vec![AssetSchema::Cfa, AssetSchema::Nia, AssetSchema::Uda],
             reuse_addresses: false,
+            script_type: ScriptType::default(),
         },
         SinglesigKeys::from_keys(&keys, None),
     )
@@ -366,6 +371,7 @@ fn watch_only_success() {
             max_allocations_per_utxo: MAX_ALLOCATIONS_PER_UTXO,
             supported_schemas: AssetSchema::VALUES.to_vec(),
             reuse_addresses: false,
+            script_type: ScriptType::default(),
         },
         SinglesigKeys::from_keys_no_mnemonic(&keys, None),
     )
@@ -383,6 +389,7 @@ fn watch_only_success() {
             max_allocations_per_utxo: MAX_ALLOCATIONS_PER_UTXO,
             supported_schemas: AssetSchema::VALUES.to_vec(),
             reuse_addresses: false,
+            script_type: ScriptType::default(),
         },
         SinglesigKeys::from_keys(&keys, None),
     )
@@ -437,6 +444,7 @@ fn watch_only_fail() {
             max_allocations_per_utxo: MAX_ALLOCATIONS_PER_UTXO,
             supported_schemas: AssetSchema::VALUES.to_vec(),
             reuse_addresses: false,
+            script_type: ScriptType::default(),
         },
         SinglesigKeys::from_keys_no_mnemonic(&keys_bad, None),
     );
@@ -473,8 +481,13 @@ fn get_descriptors_success() {
     // get descriptors from keys
     let keys = wallet.get_keys();
     let bitcoin_network = wallet.bitcoin_network();
+    let script_type = wallet.get_wallet_data().script_type;
     let descriptors = keys
-        .build_descriptors(&bitcoin_network, &BdkNetwork::from(bitcoin_network))
+        .build_descriptors(
+            &bitcoin_network,
+            &BdkNetwork::from(bitcoin_network),
+            script_type,
+        )
         .unwrap()
         .0;
 
@@ -502,6 +515,7 @@ fn supported_schemas() {
             max_allocations_per_utxo: MAX_ALLOCATIONS_PER_UTXO,
             supported_schemas: vec![AssetSchema::Nia],
             reuse_addresses: false,
+            script_type: ScriptType::default(),
         },
         SinglesigKeys::from_keys(&keys, None),
     )
@@ -534,6 +548,7 @@ fn supported_schemas() {
             max_allocations_per_utxo: MAX_ALLOCATIONS_PER_UTXO,
             supported_schemas: vec![AssetSchema::Uda],
             reuse_addresses: false,
+            script_type: ScriptType::default(),
         },
         SinglesigKeys::from_keys(&keys_rcv, None),
     )
@@ -579,6 +594,7 @@ fn supported_schemas() {
             max_allocations_per_utxo: MAX_ALLOCATIONS_PER_UTXO,
             supported_schemas: vec![AssetSchema::Cfa],
             reuse_addresses: false,
+            script_type: ScriptType::default(),
         },
         SinglesigKeys::from_keys(&keys, None),
     )
@@ -610,6 +626,7 @@ fn supported_schemas() {
             max_allocations_per_utxo: MAX_ALLOCATIONS_PER_UTXO,
             supported_schemas: vec![],
             reuse_addresses: false,
+            script_type: ScriptType::default(),
         },
         SinglesigKeys::from_keys(&keys, None),
     );
@@ -629,6 +646,7 @@ fn supported_schemas() {
             max_allocations_per_utxo: MAX_ALLOCATIONS_PER_UTXO,
             supported_schemas: vec![AssetSchema::Nia, AssetSchema::Ifa],
             reuse_addresses: false,
+            script_type: ScriptType::default(),
         },
         SinglesigKeys::from_keys(&keys_mainnet, None),
     );
@@ -637,4 +655,59 @@ fn supported_schemas() {
     if let Err(e) = result {
         assert_matches!(e, Error::CannotUseIfaOnMainnet);
     }
+}
+
+#[test]
+#[parallel]
+fn p2wpkh_success() {
+    create_test_data_dir();
+
+    let bitcoin_network = BitcoinNetwork::Regtest;
+    let keys = generate_keys_with_script_type(bitcoin_network, ScriptType::P2wpkh);
+    let wallet = Wallet::new(
+        WalletData {
+            data_dir: get_test_data_dir_string(),
+            bitcoin_network,
+            database_type: DatabaseType::Sqlite,
+            max_allocations_per_utxo: MAX_ALLOCATIONS_PER_UTXO,
+            supported_schemas: AssetSchema::VALUES.to_vec(),
+            reuse_addresses: false,
+            script_type: ScriptType::P2wpkh,
+        },
+        SinglesigKeys::from_keys(&keys, None),
+    )
+    .unwrap();
+
+    // verify descriptors use wpkh format
+    let descs = wallet.get_descriptors();
+    assert!(
+        descs.colored.starts_with("wpkh("),
+        "colored descriptor should be wpkh: {}",
+        descs.colored
+    );
+    assert!(
+        descs.vanilla.starts_with("wpkh("),
+        "vanilla descriptor should be wpkh: {}",
+        descs.vanilla
+    );
+
+    // verify derivation paths use purpose 84
+    assert!(
+        descs.colored.contains("/84'/"),
+        "colored should use purpose 84: {}",
+        descs.colored
+    );
+    assert!(
+        descs.vanilla.contains("/84'/"),
+        "vanilla should use purpose 84: {}",
+        descs.vanilla
+    );
+
+    // verify address format is P2WPKH (bcrt1q... on regtest)
+    let mut wallet = wallet;
+    let address = wallet.get_address().unwrap();
+    assert!(
+        address.starts_with("bcrt1q"),
+        "P2WPKH address should start with bcrt1q: {address}"
+    );
 }

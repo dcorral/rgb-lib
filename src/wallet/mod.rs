@@ -37,7 +37,7 @@ pub use objects::{
     BlockTime, BtcBalance, DatabaseType, EmbeddedMedia, Invoice, InvoiceData, Media, Metadata,
     Online, Outpoint, ProofOfReserves, PsbtInputInfo, PsbtInspection, PsbtOutputInfo, ReceiveData,
     Recipient, RecipientInfo, RecipientType, RgbAllocation, RgbInputInfo, RgbInspection,
-    RgbOperationInfo, RgbOutputInfo, RgbTransitionInfo, Token, TokenLight, Transaction,
+    RgbOperationInfo, RgbOutputInfo, RgbTransitionInfo, ScriptType, Token, TokenLight, Transaction,
     TransactionType, Transfer, TransferKind, TransferTransportEndpoint, TransportEndpoint,
     TypeOfTransition, Unspent, Utxo, WalletData, WalletDescriptors, WitnessData,
 };
