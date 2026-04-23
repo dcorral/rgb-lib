@@ -31,7 +31,7 @@ use crate::wallet::{
 };
 use crate::{
     database::entities::transfer_transport_endpoint,
-    keys::{Keys, generate_keys},
+    keys::{Keys, generate_keys, generate_keys_with_script_type},
     utils::{
         KEYCHAIN_BTC, KEYCHAIN_RGB, RGB_RUNTIME_DIR, block_on, get_account_data,
         get_account_derivation_children, get_coin_type, get_extended_derivation_path,
@@ -330,6 +330,7 @@ mod multisig;
 mod new;
 mod refresh;
 mod rust_only;
+mod segwit_v0;
 mod send;
 mod send_btc;
 mod sign_psbt;

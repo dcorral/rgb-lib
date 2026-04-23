@@ -26,6 +26,7 @@ impl SinglesigKeys {
         &self,
         bitcoin_network: &BitcoinNetwork,
         bdk_network: &BdkNetwork,
+        script_type: ScriptType,
     ) -> Result<(WalletDescriptors, bool), Error> {
         let xpub_rgb = str_to_xpub(&self.account_xpub_colored, bdk_network)?;
         let xpub_btc = str_to_xpub(&self.account_xpub_vanilla, bdk_network)?;
@@ -36,6 +37,7 @@ impl SinglesigKeys {
                 self.vanilla_keychain,
                 &xpub_btc,
                 &xpub_rgb,
+                script_type,
             )?;
             // check master fingerprint derived from mnemonic matches provided one
             let mnemonic = Mnemonic::parse_in(Language::English, mnemonic)?;
@@ -56,6 +58,7 @@ impl SinglesigKeys {
                 &xpub_rgb,
                 &xpub_btc,
                 self.vanilla_keychain,
+                script_type,
             )?;
             (descs, true)
         })
@@ -154,7 +157,8 @@ impl Wallet {
         let bdk_network = BdkNetwork::from(wdata.bitcoin_network);
 
         // wallet keys
-        let (descs, watch_only) = keys.build_descriptors(&wdata.bitcoin_network, &bdk_network)?;
+        let (descs, watch_only) =
+            keys.build_descriptors(&wdata.bitcoin_network, &bdk_network, wdata.script_type)?;
 
         // wallet directory and file logging setup
         let (wallet_dir, logger, _logger_guard) =
@@ -209,6 +213,7 @@ impl Wallet {
             .build_descriptors(
                 &self.internals.wallet_data.bitcoin_network,
                 &BdkNetwork::from(self.internals.wallet_data.bitcoin_network),
+                self.internals.wallet_data.script_type,
             )
             .expect("already succeeded at wallet creation")
             .0

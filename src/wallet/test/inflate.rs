@@ -430,6 +430,7 @@ fn fail() {
             max_allocations_per_utxo: MAX_ALLOCATIONS_PER_UTXO,
             supported_schemas: vec![AssetSchema::Nia, AssetSchema::Ifa],
             reuse_addresses: false,
+            script_type: ScriptType::default(),
         },
         SinglesigKeys::from_keys(&keys, None),
     )
@@ -471,6 +472,7 @@ fn fail() {
             max_allocations_per_utxo: MAX_ALLOCATIONS_PER_UTXO,
             supported_schemas: vec![AssetSchema::Nia],
             reuse_addresses: false,
+            script_type: ScriptType::default(),
         },
         SinglesigKeys::from_keys(&keys, None),
     )

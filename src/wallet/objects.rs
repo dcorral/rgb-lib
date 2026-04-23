@@ -15,6 +15,34 @@ pub enum DatabaseType {
     Sqlite,
 }
 
+/// Supported script types for wallet addresses.
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub enum ScriptType {
+    /// Pay-to-Witness-Public-Key-Hash (SegWit V0, BIP84)
+    P2wpkh,
+    /// Pay-to-Taproot (SegWit V1, BIP86)
+    #[default]
+    P2tr,
+}
+
+impl ScriptType {
+    /// BIP purpose number for this script type.
+    pub fn purpose(&self) -> u8 {
+        match self {
+            ScriptType::P2wpkh => 84,
+            ScriptType::P2tr => 86,
+        }
+    }
+
+    /// Descriptor format prefix for this script type.
+    pub(crate) fn descriptor_fn(&self) -> &'static str {
+        match self {
+            ScriptType::P2wpkh => "wpkh",
+            ScriptType::P2tr => "tr",
+        }
+    }
+}
+
 /// Data that defines a [`Wallet`].
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[cfg_attr(feature = "camel_case", serde(rename_all = "camelCase"))]
@@ -39,6 +67,9 @@ pub struct WalletData {
     /// wallets, CEX deposit addresses).
     #[serde(default)]
     pub reuse_addresses: bool,
+    /// Script type for wallet addresses. Default: P2TR (taproot).
+    #[serde(default)]
+    pub script_type: ScriptType,
 }
 
 /// Descriptors for an RGB wallet.

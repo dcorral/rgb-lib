@@ -498,6 +498,7 @@ async fn auto_backup() {
                     AssetSchema::Ifa,
                 ],
                 reuse_addresses: false,
+                script_type: ScriptType::default(),
             },
             wallet_keys,
         )
@@ -586,6 +587,7 @@ async fn unencrypted_auto_backup() {
                     AssetSchema::Ifa,
                 ],
                 reuse_addresses: false,
+                script_type: ScriptType::default(),
             },
             wallet_keys,
         )
@@ -689,6 +691,7 @@ async fn blocking_auto_backup() {
                     AssetSchema::Ifa,
                 ],
                 reuse_addresses: false,
+                script_type: ScriptType::default(),
             },
             wallet_keys,
         )
@@ -768,6 +771,7 @@ async fn auto_backup_disabled_by_default() {
                     AssetSchema::Ifa,
                 ],
                 reuse_addresses: false,
+                script_type: ScriptType::default(),
             },
             wallet_keys,
         )
