@@ -524,19 +524,23 @@ pub(crate) fn calculate_descriptor_from_xpub(
 pub(crate) fn check_proxy(proxy_url: &str) -> Result<(), Error> {
     let proxy_client = ProxyClient::new(proxy_url)?;
     let mut err_details = s!("unable to connect to proxy");
-    if let Ok(server_info) = proxy_client.get_info() {
-        if let Some(info) = server_info.result {
-            if info.protocol_version == *PROXY_PROTOCOL_VERSION {
-                return Ok(());
-            } else {
-                return Err(Error::InvalidProxyProtocol {
-                    version: info.protocol_version,
-                });
+    match proxy_client.get_info() {
+        Ok(server_info) => {
+            if let Some(info) = server_info.result {
+                if info.protocol_version == *PROXY_PROTOCOL_VERSION {
+                    return Ok(());
+                } else {
+                    return Err(Error::InvalidProxyProtocol {
+                        version: info.protocol_version,
+                    });
+                }
+            }
+            if let Some(err) = server_info.error {
+                err_details = err.message;
             }
         }
-        if let Some(err) = server_info.error {
-            err_details = err.message;
-        }
+        Err(Error::Proxy { details }) => err_details = details,
+        Err(e) => return Err(e),
     };
     Err(Error::Proxy {
         details: err_details,
@@ -1184,6 +1188,37 @@ mod tests {
         let result = check_proxy(&server.url());
         assert_matches!(result, Err(Error::Proxy { details }) if details == "method not found");
         mock.assert();
+    }
+
+    #[cfg(any(feature = "electrum", feature = "esplora"))]
+    #[test]
+    fn test_check_proxy_invalid_body_error_details() {
+        // server returns HTTP 200 with a non-JSON body
+        let mut server = mockito::Server::new();
+        let mock = server
+            .mock("POST", "/")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body("not json")
+            .create();
+        let result = check_proxy(&server.url());
+        assert_matches!(result, Err(Error::Proxy { details }) if details.contains("decoding"));
+        mock.assert();
+    }
+
+    #[cfg(any(feature = "electrum", feature = "esplora"))]
+    #[test]
+    fn test_check_proxy_connection_error_details() {
+        // bind then drop a listener to get a port that refuses connections
+        let port = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.local_addr().unwrap().port()
+        };
+        let result = check_proxy(&format!("http://127.0.0.1:{port}"));
+        assert_matches!(
+            result,
+            Err(Error::Proxy { details }) if details != "unable to connect to proxy"
+        );
     }
 
     #[test]
