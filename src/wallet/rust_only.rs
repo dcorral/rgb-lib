@@ -448,6 +448,36 @@ impl Wallet {
         Ok(transfers)
     }
 
+    /// Return the total fungible amount assigned to the given `outpoint` for the given
+    /// `contract_id`.
+    ///
+    /// <div class="warning">This method is meant for special usage, such as determining the exact
+    /// amount to color when spending an output of a channel closing transaction, and is normally
+    /// not needed, use it only if you know what you're doing</div>
+    pub fn get_outpoint_fungible_assignments(
+        &self,
+        contract_id: ContractId,
+        outpoint: Outpoint,
+    ) -> Result<u64, Error> {
+        info!(
+            self.logger(),
+            "Getting fungible assignments for outpoint {outpoint} of contract {contract_id}..."
+        );
+        let runtime = self.rgb_runtime()?;
+        let mut total = 0u64;
+        for (_, opout_state_map) in
+            runtime.contract_assignments_for(contract_id, [OutPoint::from(outpoint)])?
+        {
+            for (_, state) in opout_state_map {
+                if let AllocatedState::Amount(amt) = &state {
+                    total += amt.as_u64();
+                }
+            }
+        }
+        info!(self.logger(), "Get outpoint fungible assignments completed");
+        Ok(total)
+    }
+
     /// Create consignments for a PSBT created with the [`send_begin`](Wallet::send_begin) method.
     ///
     /// <div class="warning">This method is meant for special usage and is normally not needed, use

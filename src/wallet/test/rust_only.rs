@@ -986,3 +986,44 @@ fn offline() {
     let result = wallet.list_unspents_vanilla(Online { id: 0 }, MIN_CONFIRMATIONS, false);
     assert_matches!(result, Err(Error::Offline));
 }
+
+#[cfg(feature = "electrum")]
+#[test]
+#[parallel]
+fn outpoint_fungible_assignments() {
+    initialize();
+
+    let mut party = get_funded_party!();
+
+    let asset = party.issue_asset_nia(Some(&[AMOUNT]));
+    let contract_id = ContractId::from_str(&asset.asset_id).unwrap();
+
+    let unspents = party.list_unspents(false);
+    let colored = unspents
+        .iter()
+        .find(|u| {
+            u.rgb_allocations
+                .iter()
+                .any(|a| a.asset_id.as_deref() == Some(&asset.asset_id))
+        })
+        .expect("issuance allocation UTXO");
+    let uncolored = unspents
+        .iter()
+        .find(|u| u.rgb_allocations.is_empty())
+        .expect("uncolored UTXO");
+
+    assert_eq!(
+        party
+            .wallet
+            .get_outpoint_fungible_assignments(contract_id, colored.utxo.outpoint.clone())
+            .unwrap(),
+        AMOUNT
+    );
+    assert_eq!(
+        party
+            .wallet
+            .get_outpoint_fungible_assignments(contract_id, uncolored.utxo.outpoint.clone())
+            .unwrap(),
+        0
+    );
+}
