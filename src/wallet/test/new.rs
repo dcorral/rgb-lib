@@ -623,3 +623,62 @@ fn supported_schemas() {
         assert_matches!(e, Error::CannotUseIfaOnMainnet);
     }
 }
+
+/// A torn trailing record in the BDK file store (e.g. a `persist` interrupted
+/// by a crash or power loss) must not brick the wallet: the store data written
+/// before the bad record is intact and BDK returns it alongside the corruption
+/// error, so wallet open should recover the store and succeed instead of
+/// failing on every attempt until the file is repaired by hand.
+#[test]
+#[parallel]
+fn recovers_from_torn_bdk_store_tail() {
+    use std::io::Write;
+
+    let keys = generate_keys(BitcoinNetwork::Regtest, WitnessVersion::Taproot);
+    let wallet_keys = SinglesigKeys::from_keys(&keys, None);
+    let data_dir = tempfile::tempdir().unwrap();
+    let wallet_data = WalletData {
+        data_dir: data_dir.path().to_string_lossy().to_string(),
+        bitcoin_network: BitcoinNetwork::Regtest,
+        database_type: DatabaseType::Sqlite,
+        max_allocations_per_utxo: MAX_ALLOCATIONS_PER_UTXO,
+        supported_schemas: AssetSchema::VALUES.to_vec(),
+    };
+
+    // create the wallet and let it persist its BDK store, revealing an
+    // address so the store holds state beyond the initial descriptors
+    let mut wallet = Wallet::new(wallet_data.clone(), wallet_keys.clone()).unwrap();
+    let wallet_dir = wallet.get_wallet_dir();
+    let address_before = wallet.get_address().unwrap();
+    drop(wallet);
+
+    // simulate the torn write: one garbage byte appended to the store tail
+    let bdk_db_path = wallet_dir.join("bdk_db");
+    assert!(bdk_db_path.exists());
+    let mut file = fs::OpenOptions::new()
+        .append(true)
+        .open(&bdk_db_path)
+        .unwrap();
+    file.write_all(&[0x0e]).unwrap();
+    drop(file);
+
+    // wallet open must recover the store instead of failing
+    let mut wallet = match Wallet::new(wallet_data.clone(), wallet_keys.clone()) {
+        Ok(wallet) => wallet,
+        Err(e) => panic!("wallet open should recover from a torn BDK store tail: {e:?}"),
+    };
+
+    // recovery must preserve the pre-corruption store state, not rebuild the
+    // wallet from scratch: the reveal index survives, so the next address
+    // continues the sequence instead of repeating the first one
+    let address_after = wallet.get_address().unwrap();
+    assert_ne!(
+        address_after, address_before,
+        "recovered store lost the revealed address index (store was wiped, not recovered)"
+    );
+
+    // the recovered store persists cleanly
+    drop(wallet);
+    let result = Wallet::new(wallet_data, wallet_keys);
+    assert!(result.is_ok(), "recovered store should reopen cleanly");
+}
