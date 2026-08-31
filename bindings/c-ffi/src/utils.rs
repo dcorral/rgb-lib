@@ -868,3 +868,15 @@ pub(crate) fn witness_receive(
     )?;
     Ok(serde_json::to_string(&res)?)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ptr_to_num_rejects_null() {
+        // a NULL pointer for a mandatory parameter must be reported as an error, not dereferenced
+        let res: Result<u64, Error> = ptr_to_num(std::ptr::null());
+        assert!(res.is_err());
+    }
+}
