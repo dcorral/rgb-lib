@@ -478,3 +478,28 @@ fn manifest_fingerprint_mismatch_fail() {
         .unwrap();
     assert_matches!(err, Error::FingerprintMismatch);
 }
+
+#[test]
+#[parallel]
+fn new_keeps_manifest_when_settings_unchanged() {
+    let test_data_dir = create_test_data_dir();
+    let test_data_dir_str = test_data_dir.to_string_lossy().to_string();
+
+    let keys = generate_keys(BitcoinNetwork::Regtest, WitnessVersion::Taproot);
+    let wallet_data = get_test_wallet_data(&test_data_dir_str);
+    let wallet = Wallet::new(wallet_data.clone(), SinglesigKeys::from_keys(&keys, None)).unwrap();
+    let manifest_path = wallet.get_wallet_dir().join(WALLET_MANIFEST_FILE);
+    drop(wallet);
+    let manifest_before = fs::read_to_string(&manifest_path).unwrap();
+
+    // freeze the manifest file: reopening with identical settings has nothing to change, so it must
+    // not need to rewrite (and therefore must not be able to tear) the manifest
+    let mut perms = fs::metadata(&manifest_path).unwrap().permissions();
+    perms.set_readonly(true);
+    fs::set_permissions(&manifest_path, perms).unwrap();
+
+    let wallet = Wallet::new(wallet_data, SinglesigKeys::from_keys(&keys, None)).unwrap();
+    drop(wallet);
+
+    assert_eq!(fs::read_to_string(&manifest_path).unwrap(), manifest_before);
+}
