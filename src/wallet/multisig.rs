@@ -2333,6 +2333,55 @@ impl MultisigWallet {
 mod test {
     use super::*;
 
+    #[cfg(feature = "electrum")]
+    #[test]
+    fn import_receive_data_reports_parse_error_details() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let wallet_data = WalletData {
+            data_dir: data_dir.path().to_string_lossy().to_string(),
+            bitcoin_network: BitcoinNetwork::Regtest,
+            database_type: DatabaseType::Sqlite,
+            max_allocations_per_utxo: 5,
+            supported_schemas: AssetSchema::VALUES.to_vec(),
+        };
+        let cosigners = (0..3)
+            .map(|_| {
+                Cosigner::from_keys(
+                    &generate_keys(BitcoinNetwork::Regtest, WitnessVersion::Taproot),
+                    None,
+                )
+            })
+            .collect();
+        let keys = MultisigKeys::new(cosigners, 2, 2);
+        let mut wallet = MultisigWallet::new(wallet_data, keys).unwrap();
+
+        // receive data as serialized by a coordinator on a version where the expiration was
+        // optional: expiration_timestamp is null and no longer parses
+        let metadata_path = wallet.get_wallet_dir().join("old_receive_data.json");
+        fs::write(
+            &metadata_path,
+            r#"{"invoice":"inv","min_confirmations":1,"expiration_timestamp":null,"secret_seal":null}"#,
+        )
+        .unwrap();
+        let files = [FileResponse {
+            r#type: FileType::OperationData,
+            filepath: metadata_path,
+        }];
+
+        let txn = wallet.database().begin_transaction().unwrap();
+        let err = wallet
+            .import_receive_data(&txn, &files, &OperationType::BlindReceive)
+            .unwrap_err();
+        // the parse failure must say what is wrong with the data, not only that it is invalid
+        assert!(
+            matches!(
+                &err,
+                Error::MultisigUnexpectedData { details } if details.contains("null")
+            ),
+            "unexpected error: {err:?}"
+        );
+    }
+
     #[test]
     fn cosigner_display_and_parse() {
         let keys = generate_keys(BitcoinNetwork::Regtest, WitnessVersion::Taproot);
