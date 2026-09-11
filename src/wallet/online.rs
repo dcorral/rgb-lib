@@ -187,6 +187,7 @@ pub trait WalletOnline: WalletOffline {
         addresses: &Vec<ScriptBuf>,
         size: u32,
         fee_rate: FeeRate,
+        change_script: Option<&ScriptBuf>,
     ) -> Result<Psbt, bdk_wallet::error::CreateTxError> {
         let mut tx_builder = self.bdk_wallet_mut().build_tx();
         tx_builder
@@ -196,6 +197,9 @@ pub trait WalletOnline: WalletOffline {
             .fee_rate(fee_rate);
         for address in addresses {
             tx_builder.add_recipient(address.clone(), BdkAmount::from_sat(size as u64));
+        }
+        if let Some(script) = change_script {
+            tx_builder.drain_to(script.clone());
         }
         tx_builder.finish()
     }
@@ -281,8 +285,15 @@ pub trait WalletOnline: WalletOffline {
         for _i in 0..num_try_creating {
             addresses.push(self.get_new_address()?.script_pubkey());
         }
+        let change_script = self.reuse_change_script()?;
         while !addresses.is_empty() {
-            match self.create_split_tx(&inputs, &addresses, utxo_size, fee_rate_checked) {
+            match self.create_split_tx(
+                &inputs,
+                &addresses,
+                utxo_size,
+                fee_rate_checked,
+                change_script.as_ref(),
+            ) {
                 Ok(psbt) => {
                     if !dry_run {
                         self.reserve_vanilla_txos(txn, &psbt, WalletTransactionType::CreateUtxos)?;
@@ -1053,7 +1064,11 @@ pub trait WalletOnline: WalletOffline {
             .recipient_id
             .clone()
             .expect("transfer should have a recipient ID");
-        debug!(self.logger(), "Recipient ID: {recipient_id}");
+        let proxy_rid = transfer.proxy_recipient_id();
+        debug!(
+            self.logger(),
+            "Recipient ID: {recipient_id} (proxy key: {proxy_rid})"
+        );
 
         if transfer.uses_out_of_band_exchange() {
             debug!(self.logger(), "Skipping consignment exchange out-of-band");
@@ -1069,8 +1084,8 @@ pub trait WalletOnline: WalletOffline {
         // reason (e.g. network error), reuse them instead of hitting the proxy
         // again; the endpoint we used is recoverable from the DB via the
         // `used` flag on the transfer transport endpoint
-        let consignment_path = self.get_receive_consignment_path(&recipient_id);
-        let consignment_meta_path = self.get_receive_consignment_meta_path(&recipient_id);
+        let consignment_path = self.get_receive_consignment_path(&proxy_rid);
+        let consignment_meta_path = self.get_receive_consignment_meta_path(&proxy_rid);
         let (proxy_url, txid, vout) = if consignment_path.exists()
             && consignment_meta_path.exists()
             && let Some(cached_proxy_url) = tte_data
@@ -1089,19 +1104,18 @@ pub trait WalletOnline: WalletOffline {
             // download consignment and its metadata
             let mut proxy_res = None;
             for (transfer_transport_endpoint, transport_endpoint) in tte_data {
-                let result = match self
-                    .get_consignment(&transport_endpoint.endpoint, recipient_id.clone())
-                {
-                    Err(Error::NoConsignment) => {
-                        info!(
-                            self.logger(),
-                            "Skipping transport endpoint: {:?}", &transport_endpoint
-                        );
-                        continue;
-                    }
-                    Err(e) => return Err(e),
-                    Ok(r) => r,
-                };
+                let result =
+                    match self.get_consignment(&transport_endpoint.endpoint, proxy_rid.clone()) {
+                        Err(Error::NoConsignment) => {
+                            info!(
+                                self.logger(),
+                                "Skipping transport endpoint: {:?}", &transport_endpoint
+                            );
+                            continue;
+                        }
+                        Err(e) => return Err(e),
+                        Ok(r) => r,
+                    };
 
                 proxy_res = Some((
                     result.consignment,
@@ -1131,7 +1145,7 @@ pub trait WalletOnline: WalletOffline {
                     return self.refuse_consignment(
                         txn,
                         &ReceiveMode::Proxy { proxy_url },
-                        recipient_id,
+                        proxy_rid,
                         &mut updated_batch_transfer,
                     );
                 }
@@ -1155,7 +1169,7 @@ pub trait WalletOnline: WalletOffline {
             batch_transfer,
             &asset_transfer,
             &transfer,
-            recipient_id,
+            proxy_rid,
             &consignment_path,
             txid,
             vout,
@@ -1172,7 +1186,7 @@ pub trait WalletOnline: WalletOffline {
         batch_transfer: &DbBatchTransfer,
         asset_transfer: &DbAssetTransfer,
         transfer: &DbTransfer,
-        recipient_id: String,
+        proxy_rid: String,
         consignment_path: &Path,
         txid: String,
         vout: Option<u32>,
@@ -1184,7 +1198,7 @@ pub trait WalletOnline: WalletOffline {
             Ok(c) => c,
             Err(e) => {
                 error!(self.logger(), "Failed to load consignment file: {e}");
-                return self.refuse_consignment(txn, &mode, recipient_id, updated_batch_transfer);
+                return self.refuse_consignment(txn, &mode, proxy_rid, updated_batch_transfer);
             }
         };
         let contract_id = consignment.contract_id();
@@ -1197,7 +1211,7 @@ pub trait WalletOnline: WalletOffline {
                 self.logger(),
                 "The wallet doesn't support the provided schema: {}", asset_schema
             );
-            return self.refuse_consignment(txn, &mode, recipient_id, updated_batch_transfer);
+            return self.refuse_consignment(txn, &mode, proxy_rid, updated_batch_transfer);
         }
 
         // check if DB transfer is connected to an asset
@@ -1208,7 +1222,7 @@ pub trait WalletOnline: WalletOffline {
                     self.logger(),
                     "Received a different asset than the expected one"
                 );
-                return self.refuse_consignment(txn, &mode, recipient_id, updated_batch_transfer);
+                return self.refuse_consignment(txn, &mode, proxy_rid, updated_batch_transfer);
             }
         }
 
@@ -1217,9 +1231,44 @@ pub trait WalletOnline: WalletOffline {
             Ok(txid) => txid,
             Err(_) => {
                 error!(self.logger(), "Received an invalid TXID");
-                return self.refuse_consignment(txn, &mode, recipient_id, updated_batch_transfer);
+                return self.refuse_consignment(txn, &mode, proxy_rid, updated_batch_transfer);
             }
         };
+
+        // a consignment for an output that already credited another transfer is a replay: under
+        // address reuse every witness invoice shares the script, so the script check alone cannot
+        // tell a fresh payment from an old one; refused before paying for validation
+        if let (Some(RecipientTypeFull::Witness { .. }), Some(vout)) =
+            (&transfer.recipient_type, vout)
+        {
+            let candidates: Vec<DbBatchTransfer> = txn
+                .get_batch_transfers_by_txid(&txid)?
+                .into_iter()
+                .filter(|bt| bt.incoming && bt.idx != batch_transfer.idx && !bt.failed())
+                .collect();
+            // the two tables are only loaded when another transfer shares the TXID
+            let replayed = !candidates.is_empty() && {
+                let asset_transfers = txn.iter_asset_transfers()?;
+                let transfers = txn.iter_transfers()?;
+                candidates.iter().any(|bt| {
+                    bt.get_incoming_transfer(&asset_transfers, &transfers)
+                        .map(|(_, t)| {
+                            matches!(
+                                t.recipient_type,
+                                Some(RecipientTypeFull::Witness { vout: Some(v), .. }) if v == vout
+                            )
+                        })
+                        .unwrap_or(false)
+                })
+            };
+            if replayed {
+                error!(
+                    self.logger(),
+                    "Output {txid}:{vout} already credited another transfer, refusing consignment"
+                );
+                return self.refuse_consignment(txn, &mode, proxy_rid, updated_batch_transfer);
+            }
+        }
 
         // validate consignment
         debug!(self.logger(), "Validating consignment...");
@@ -1239,7 +1288,7 @@ pub trait WalletOnline: WalletOffline {
             Ok(consignment) => consignment,
             Err(ValidationError::InvalidConsignment(e)) => {
                 error!(self.logger(), "Consignment is invalid: {}", e);
-                return self.refuse_consignment(txn, &mode, recipient_id, updated_batch_transfer);
+                return self.refuse_consignment(txn, &mode, proxy_rid, updated_batch_transfer);
             }
             Err(ValidationError::ResolverError(e)) => {
                 warn!(self.logger(), "Network error during consignment validation");
@@ -1261,7 +1310,7 @@ pub trait WalletOnline: WalletOffline {
                     self.logger(),
                     "Cannot find the provided TXID in the consignment"
                 );
-                return self.refuse_consignment(txn, &mode, recipient_id, updated_batch_transfer);
+                return self.refuse_consignment(txn, &mode, proxy_rid, updated_batch_transfer);
             }
         };
 
@@ -1279,7 +1328,7 @@ pub trait WalletOnline: WalletOffline {
                                 return self.refuse_consignment(
                                     txn,
                                     &mode,
-                                    recipient_id,
+                                    proxy_rid,
                                     updated_batch_transfer,
                                 );
                             }
@@ -1288,7 +1337,7 @@ pub trait WalletOnline: WalletOffline {
                             return self.refuse_consignment(
                                 txn,
                                 &mode,
-                                recipient_id,
+                                proxy_rid,
                                 updated_batch_transfer,
                             );
                         }
@@ -1297,7 +1346,7 @@ pub trait WalletOnline: WalletOffline {
                         return self.refuse_consignment(
                             txn,
                             &mode,
-                            recipient_id,
+                            proxy_rid,
                             updated_batch_transfer,
                         );
                     }
@@ -1306,12 +1355,7 @@ pub trait WalletOnline: WalletOffline {
                         self.logger(),
                         "The vout should be provided when receiving via witness"
                     );
-                    return self.refuse_consignment(
-                        txn,
-                        &mode,
-                        recipient_id,
-                        updated_batch_transfer,
-                    );
+                    return self.refuse_consignment(txn, &mode, proxy_rid, updated_batch_transfer);
                 }
                 None
             }
@@ -1319,7 +1363,7 @@ pub trait WalletOnline: WalletOffline {
         let receiving = self.assignments_for_bundle(anchored_bundle, vout, known_concealed);
         if receiving.is_empty() {
             error!(self.logger(), "Cannot find any receiving assignment");
-            return self.refuse_consignment(txn, &mode, recipient_id, updated_batch_transfer);
+            return self.refuse_consignment(txn, &mode, proxy_rid, updated_batch_transfer);
         };
 
         if asset_schema == AssetSchema::Ifa {
@@ -1348,12 +1392,7 @@ pub trait WalletOnline: WalletOffline {
                         "Found {} opout(s) that must be rejected",
                         to_reject.len()
                     );
-                    return self.refuse_consignment(
-                        txn,
-                        &mode,
-                        recipient_id,
-                        updated_batch_transfer,
-                    );
+                    return self.refuse_consignment(txn, &mode, proxy_rid, updated_batch_transfer);
                 } else {
                     info!(
                         self.logger(),
@@ -1371,12 +1410,7 @@ pub trait WalletOnline: WalletOffline {
 
                 let attachments = self.extract_attachments(&valid_contract, asset_schema);
                 if !self.fetch_and_save_attachments(attachments, &mode)? {
-                    return self.refuse_consignment(
-                        txn,
-                        &mode,
-                        recipient_id,
-                        updated_batch_transfer,
-                    );
+                    return self.refuse_consignment(txn, &mode, proxy_rid, updated_batch_transfer);
                 }
 
                 runtime
@@ -1414,10 +1448,16 @@ pub trait WalletOnline: WalletOffline {
             Some(RecipientTypeFull::Blind { ref unblinded_utxo }) => {
                 txn.get_txo(unblinded_utxo)?.expect("utxo must exist").idx
             }
-            Some(RecipientTypeFull::Witness { .. }) => {
+            Some(RecipientTypeFull::Witness {
+                ref recipient_nonce,
+                ..
+            }) => {
                 let mut updated_transfer: DbTransferActMod = transfer.clone().into();
                 updated_transfer.recipient_type =
-                    ActiveValue::Set(Some(RecipientTypeFull::Witness { vout }));
+                    ActiveValue::Set(Some(RecipientTypeFull::Witness {
+                        vout,
+                        recipient_nonce: recipient_nonce.clone(),
+                    }));
                 txn.update_transfer(&mut updated_transfer)?;
                 let db_utxo = DbTxoActMod {
                     txid: ActiveValue::Set(txid.clone()),
@@ -1462,7 +1502,7 @@ pub trait WalletOnline: WalletOffline {
         self.ack_consignment(
             txn,
             batch_transfer,
-            recipient_id,
+            proxy_rid,
             updated_batch_transfer,
             &mode,
             signed_tx,
@@ -1573,7 +1613,8 @@ pub trait WalletOnline: WalletOffline {
 
             // copy the provided consignment to the canonical receive path, so later refresh stages
             // (safe height, confirmations) find it where they expect it
-            let consignment_path = self.get_receive_consignment_path(&recipient_id);
+            let proxy_rid = transfer.proxy_recipient_id();
+            let consignment_path = self.get_receive_consignment_path(&proxy_rid);
             let transfer_dir = consignment_path.parent().unwrap();
             fs::create_dir_all(transfer_dir)?;
             fs::copy(consignment_path_in, &consignment_path)?;
@@ -1587,7 +1628,7 @@ pub trait WalletOnline: WalletOffline {
                 &batch_transfer,
                 &asset_transfer,
                 &transfer,
-                recipient_id,
+                proxy_rid,
                 &consignment_path,
                 txid,
                 vout,
@@ -1617,11 +1658,8 @@ pub trait WalletOnline: WalletOffline {
 
         let (_, transfer) =
             batch_transfer.get_incoming_transfer(&db_data.asset_transfers, &db_data.transfers)?;
-        let recipient_id = transfer
-            .recipient_id
-            .clone()
-            .expect("transfer should have a recipient ID");
-        let consignment_path = self.get_receive_consignment_path(&recipient_id);
+        let proxy_rid = transfer.proxy_recipient_id();
+        let consignment_path = self.get_receive_consignment_path(&proxy_rid);
         let valid_consignment_path = self.get_receive_valid_consignment_path(&consignment_path);
         let valid_consignment =
             ValidTransfer::load_file(&valid_consignment_path).map_err(InternalError::from)?;
@@ -1670,7 +1708,7 @@ pub trait WalletOnline: WalletOffline {
         self.ack_consignment(
             txn,
             batch_transfer,
-            recipient_id,
+            proxy_rid,
             &mut updated_batch_transfer,
             &mode,
             signed_tx,
@@ -1703,14 +1741,19 @@ pub trait WalletOnline: WalletOffline {
                     .into_iter()
                     .find(|(tte, _ce)| tte.used)
                     .expect("there should be 1 used TTE");
-                let proxy_url = transport_endpoint.endpoint.clone();
+                let (proxy_url, nonce) = extract_recipient_nonce(&transport_endpoint.endpoint)?;
                 let recipient_id = transfer
                     .recipient_id
                     .clone()
                     .expect("transfer should have a recipient ID");
-                debug!(self.logger(), "Recipient ID: {recipient_id}");
+                let proxy_rid =
+                    derive_proxy_recipient_id(&recipient_id, nonce.as_deref().unwrap_or(&[]));
+                debug!(
+                    self.logger(),
+                    "Recipient ID: {recipient_id} (proxy key: {proxy_rid})"
+                );
                 let proxy_client = ProxyClient::new(&proxy_url)?;
-                let ack_res = proxy_client.get_ack(&recipient_id)?;
+                let ack_res = proxy_client.get_ack(&proxy_rid)?;
                 debug!(
                     self.logger(),
                     "Consignment ACK/NACK response: {:?}", ack_res
@@ -1798,15 +1841,38 @@ pub trait WalletOnline: WalletOffline {
     ) -> Result<Option<OperationResult>, Error> {
         let db_data = txn.get_db_data(false)?;
 
-        // recipient IDs are unique per transfer, so this identifies a single recipient transfer
-        let transfer = db_data
+        // a counterparty that reuses addresses can hand out one recipient ID for several
+        // invoices: refuse when more than one pending outgoing transfer matches
+        let mut matching: Vec<&DbTransfer> = db_data
             .transfers
             .iter()
-            .find(|t| t.recipient_id.as_deref() == Some(recipient_id.as_str()))
-            .cloned()
-            .ok_or(Error::CannotProvideOutOfBandAck {
-                details: s!("no transfer found for the provided recipient ID"),
-            })?;
+            .filter(|t| t.recipient_id.as_deref() == Some(recipient_id.as_str()))
+            .collect();
+        let had_matches = !matching.is_empty();
+        if matching.len() > 1 {
+            matching.retain(|t| {
+                let (_, bt) =
+                    t.related_transfers(&db_data.asset_transfers, &db_data.batch_transfers);
+                !bt.incoming && bt.status == TransferStatus::WaitingCounterparty
+            });
+            if matching.len() > 1 {
+                return Err(Error::CannotProvideOutOfBandAck {
+                    details: s!("several pending transfers share this recipient ID"),
+                });
+            }
+        }
+        if matching.is_empty() && had_matches {
+            return Err(Error::CannotProvideOutOfBandAck {
+                details: s!("no pending outgoing transfer found for the provided recipient ID"),
+            });
+        }
+        let transfer =
+            matching
+                .first()
+                .map(|t| (*t).clone())
+                .ok_or(Error::CannotProvideOutOfBandAck {
+                    details: s!("no transfer found for the provided recipient ID"),
+                })?;
         let asset_transfer = db_data
             .asset_transfers
             .iter()
@@ -1957,8 +2023,9 @@ pub trait WalletOnline: WalletOffline {
                 .recipient_id
                 .expect("transfer should have a recipient ID");
             debug!(self.logger(), "Recipient ID: {recipient_id}");
+            let proxy_rid = transfer.proxy_recipient_id();
 
-            if let Some(RecipientTypeFull::Witness { vout }) = transfer.recipient_type {
+            if let Some(RecipientTypeFull::Witness { vout, .. }) = transfer.recipient_type {
                 if !skip_sync {
                     self.sync_wallet(
                         txn,
@@ -1980,7 +2047,7 @@ pub trait WalletOnline: WalletOffline {
             }
 
             // accept consignment
-            let consignment_path = self.get_receive_consignment_path(&recipient_id);
+            let consignment_path = self.get_receive_consignment_path(&proxy_rid);
             let valid_consignment_path = self.get_receive_valid_consignment_path(&consignment_path);
             let valid_consignment =
                 ValidTransfer::load_file(&valid_consignment_path).map_err(InternalError::from)?;
@@ -2854,10 +2921,13 @@ pub trait WalletOnline: WalletOffline {
                     );
                     continue;
                 }
-                let proxy_url = transport_endpoint.endpoint.clone();
+                // the receiver's invoice may carry a per-invoice nonce in the endpoint URL
+                let (proxy_url, nonce) = extract_recipient_nonce(&transport_endpoint.endpoint)?;
+                let proxy_rid =
+                    derive_proxy_recipient_id(recipient_id, nonce.as_deref().unwrap_or(&[]));
                 debug!(
                     self.logger(),
-                    "Posting consignment for recipient ID: {recipient_id}"
+                    "Posting consignment for recipient ID: {recipient_id} (proxy key: {proxy_rid})"
                 );
                 #[cfg(test)]
                 let vout = mock_vout(recipient.local_recipient_data.vout());
@@ -2866,7 +2936,7 @@ pub trait WalletOnline: WalletOffline {
                 let proxy_client = ProxyClient::new(&proxy_url)?;
                 match self.post_consignment_to_proxy(
                     &proxy_client,
-                    recipient_id.clone(),
+                    proxy_rid,
                     &consignment_path,
                     txid.clone(),
                     vout,
@@ -3074,7 +3144,10 @@ pub trait WalletOnline: WalletOffline {
                         txn.set_coloring(db_coloring)?;
                         (
                             Some(recipient.recipient_id.clone()),
-                            Some(RecipientTypeFull::Witness { vout: Some(vout) }),
+                            Some(RecipientTypeFull::Witness {
+                                vout: Some(vout),
+                                recipient_nonce: vec![],
+                            }),
                             recipient.assignment,
                         )
                     }
@@ -3462,7 +3535,9 @@ pub trait WalletOnline: WalletOffline {
                             used: false,
                             usable: false,
                         };
-                        if check_proxy(&transport_endpoint.endpoint).is_ok() {
+                        if check_proxy(&extract_recipient_nonce(&transport_endpoint.endpoint)?.0)
+                            .is_ok()
+                        {
                             local_transport_endpoint.usable = true;
                             found_valid = true;
                         }
@@ -3719,6 +3794,7 @@ pub trait WalletOnline: WalletOffline {
         }
 
         let script_pubkey = self.get_script_pubkey(&address)?;
+        let change_script = self.reuse_change_script()?;
 
         let unspendable = self.get_unspendable_bdk_outpoints(txn)?;
 
@@ -3727,6 +3803,9 @@ pub trait WalletOnline: WalletOffline {
             .unspendable(unspendable)
             .add_recipient(script_pubkey, BdkAmount::from_sat(amount))
             .fee_rate(fee_rate_checked);
+        if let Some(script) = change_script {
+            tx_builder.drain_to(script);
+        }
         let psbt = tx_builder.finish().map_err(|e| match e {
             bdk_wallet::error::CreateTxError::CoinSelection(InsufficientFunds {
                 needed,
@@ -3808,6 +3887,7 @@ pub trait WalletOnline: WalletOffline {
         let amount_sat = max(amount_sat, dust);
         let mut local_recipients = vec![];
         let mut witness_recipients: Vec<(ScriptBuf, u64)> = vec![];
+        let mut receive_ids = vec![];
         for (idx, amt) in inflation_amounts.iter().enumerate() {
             let script_pubkey = self
                 .get_new_addresses(KeychainKind::External, 1)?
@@ -3817,6 +3897,8 @@ pub trait WalletOnline: WalletOffline {
             let recipient_id = beneficiary.to_string();
             witness_recipients.push((script_pubkey, amount_sat));
             let vout = idx as u32 + 1; // start from 1 because of OP_RETURN
+            // outputs are keyed by vout: under address reuse they all share the pinned script
+            receive_ids.push(format!("{recipient_id}:{vout}"));
             local_recipients.push(LocalRecipient {
                 recipient_id,
                 local_recipient_data: LocalRecipientData::Witness(LocalWitnessData {
@@ -3849,10 +3931,6 @@ pub trait WalletOnline: WalletOffline {
         let mut transfer_info_map: BTreeMap<String, InfoAssetTransfer> =
             BTreeMap::from([(asset_id.clone(), transfer_info)]);
 
-        let receive_ids: Vec<String> = local_recipients
-            .iter()
-            .map(|lr| lr.recipient_id.clone())
-            .collect();
         let transfer_dir = self.setup_transfer_directory(receive_ids)?;
 
         let mut rejected = HashSet::new();

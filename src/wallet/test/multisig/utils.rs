@@ -283,6 +283,14 @@ impl OfflineSigParty for WatchOnlyParty<'_> {
 }
 
 pub(super) fn get_test_ms_wallet(keys: &MultisigKeys, dir: String) -> MultisigWallet {
+    get_test_ms_wallet_opts(keys, dir, false)
+}
+
+pub(super) fn get_test_ms_wallet_opts(
+    keys: &MultisigKeys,
+    dir: String,
+    reuse_addresses: bool,
+) -> MultisigWallet {
     let data_dir = get_test_data_dir_path()
         .join(dir)
         .to_string_lossy()
@@ -295,6 +303,7 @@ pub(super) fn get_test_ms_wallet(keys: &MultisigKeys, dir: String) -> MultisigWa
             database_type: DatabaseType::Sqlite,
             max_allocations_per_utxo: MAX_ALLOCATIONS_PER_UTXO,
             supported_schemas: AssetSchema::VALUES.to_vec(),
+            reuse_addresses,
         },
         keys.clone(),
     )
@@ -1599,7 +1608,7 @@ pub(super) fn inspect_send(
     }
 }
 
-fn op_counter_bump() -> i32 {
+pub(super) fn op_counter_bump() -> i32 {
     OP_COUNTER.fetch_add(1, Ordering::SeqCst);
     OP_COUNTER.load(Ordering::SeqCst) as i32
 }

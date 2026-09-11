@@ -387,6 +387,7 @@ pub(crate) use utils::{api::*, helpers::*};
 // API tests
 #[cfg(feature = "electrum")]
 mod abort_pending_vanilla_tx;
+mod address_reuse;
 #[cfg(feature = "electrum")]
 mod backup;
 mod blind_receive;

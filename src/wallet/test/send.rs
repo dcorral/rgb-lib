@@ -4251,7 +4251,7 @@ fn witness_multiple_assets_success() {
         (rcv_xfer_2a, btc_amount_2a),
         (rcv_xfer_2b, btc_amount_2b),
     ] {
-        let RecipientTypeFull::Witness { vout } = rcv_xfer.recipient_type.unwrap() else {
+        let RecipientTypeFull::Witness { vout, .. } = rcv_xfer.recipient_type.unwrap() else {
             panic!()
         };
         let transfer_vout = vout.unwrap() as u64;
@@ -6705,9 +6705,9 @@ fn pending_witness_txo() {
     assert!(rcv_txo.exists);
     assert!(rcv_txo.pending_witness);
 
-    // check the recipient pending witness script has been deleted
+    // check the recipient pending witness script is kept while the transfer is pending
     let rcv_pending_witness_scripts = rcv_party.db_pending_witness_scripts();
-    assert!(rcv_pending_witness_scripts.is_empty());
+    assert_eq!(rcv_pending_witness_scripts.len(), 1);
 
     // mine + refresh the recipient to move the transfer to Settled
     drop(_guard);
@@ -6722,6 +6722,11 @@ fn pending_witness_txo() {
     let rcv_txo = rcv_party.db_txo(&rcv_outpoint).unwrap();
     assert!(rcv_txo.exists);
     assert!(!rcv_txo.pending_witness);
+
+    // check the pending witness script is released by the next sync after settlement
+    rcv_party.list_unspents_with_sync(false);
+    let rcv_pending_witness_scripts = rcv_party.db_pending_witness_scripts();
+    assert!(rcv_pending_witness_scripts.is_empty());
 
     //
     // donation
@@ -6794,9 +6799,9 @@ fn pending_witness_txo() {
         vout: rcv_txo.vout,
     };
 
-    // check pending witness script has been deleted
+    // check the pending witness script is kept while the transfer is pending
     let rcv_pending_witness_scripts = rcv_party.db_pending_witness_scripts();
-    assert!(rcv_pending_witness_scripts.is_empty());
+    assert_eq!(rcv_pending_witness_scripts.len(), 1);
 
     // refresh to move the transfer to WaitingConfirmations
     rcv_party.refresh_all();
@@ -6825,6 +6830,11 @@ fn pending_witness_txo() {
     let rcv_txo = rcv_party.db_txo(&rcv_outpoint).unwrap();
     assert!(rcv_txo.exists);
     assert!(!rcv_txo.pending_witness);
+
+    // check the pending witness script is released by the next sync after settlement
+    rcv_party.list_unspents_with_sync(false);
+    let rcv_pending_witness_scripts = rcv_party.db_pending_witness_scripts();
+    assert!(rcv_pending_witness_scripts.is_empty());
 }
 
 #[cfg(feature = "electrum")]
