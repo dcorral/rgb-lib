@@ -1132,6 +1132,14 @@ impl Wallet {
         self._get_wallet().get_address()
     }
 
+    fn rotate_vanilla_address(&self) -> Result<String, RgbLibError> {
+        self._get_wallet().rotate_vanilla_address()
+    }
+
+    fn rotate_colored_address(&self) -> Result<String, RgbLibError> {
+        self._get_wallet().rotate_colored_address()
+    }
+
     fn get_asset_balance(&self, asset_id: String) -> Result<Balance, RgbLibError> {
         self._get_wallet().get_asset_balance(asset_id)
     }
@@ -1838,6 +1846,16 @@ impl MultisigWallet {
     fn get_address(&self, online: Online) -> Result<String, RgbLibError> {
         let mut wallet = self.wallet_mutex.lock().expect("wallet");
         wallet.get_address(online)
+    }
+
+    fn rotate_vanilla_address(&self, online: Online) -> Result<String, RgbLibError> {
+        let mut wallet = self.wallet_mutex.lock().expect("wallet");
+        wallet.rotate_vanilla_address(online)
+    }
+
+    fn rotate_colored_address(&self, online: Online) -> Result<String, RgbLibError> {
+        let mut wallet = self.wallet_mutex.lock().expect("wallet");
+        wallet.rotate_colored_address(online)
     }
 
     fn sync_with_hub(&self, online: Online) -> Result<Option<OperationInfo>, RgbLibError> {
