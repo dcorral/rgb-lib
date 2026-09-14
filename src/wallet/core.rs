@@ -754,3 +754,29 @@ pub trait WalletCore {
         self.sync_bdk_and_db_txos(txn, options, include_spent)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn manifest_without_reuse_flag_reads_as_disabled() {
+        let keys = crate::keys::generate_keys(BitcoinNetwork::Regtest, WitnessVersion::Taproot);
+        let wallet_data = WalletData {
+            data_dir: s!("."),
+            bitcoin_network: BitcoinNetwork::Regtest,
+            database_type: DatabaseType::Sqlite,
+            max_allocations_per_utxo: 1,
+            supported_schemas: vec![],
+            reuse_addresses: true,
+        };
+        let manifest = WalletManifest::new(&wallet_data, &SinglesigKeys::from_keys(&keys, None));
+        let mut json = serde_json::to_value(manifest).unwrap();
+        json.as_object_mut()
+            .unwrap()
+            .remove("reuse_addresses")
+            .unwrap();
+        let manifest: WalletManifest = serde_json::from_value(json).unwrap();
+        assert!(!manifest.reuse_addresses);
+    }
+}

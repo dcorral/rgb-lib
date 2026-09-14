@@ -360,7 +360,7 @@ pub(crate) trait OfflineSigParty {
             .collect()
     }
 
-    #[cfg(feature = "electrum")]
+    #[cfg(any(feature = "electrum", feature = "esplora"))]
     fn db_txo(&self, outpoint: &Outpoint) -> Option<DbTxo> {
         let txn = self.wlt().database().begin_transaction().unwrap();
         let txo = txn.get_txo(outpoint).unwrap();
@@ -368,7 +368,7 @@ pub(crate) trait OfflineSigParty {
         txo
     }
 
-    #[cfg(feature = "electrum")]
+    #[cfg(any(feature = "electrum", feature = "esplora"))]
     fn db_txos(&self) -> Vec<DbTxo> {
         let txn = self.wlt().database().begin_transaction().unwrap();
         let txos = txn.iter_txos().unwrap();
@@ -475,7 +475,7 @@ pub(crate) trait OfflineSigParty {
         opouts
     }
 
-    #[cfg(feature = "electrum")]
+    #[cfg(any(feature = "electrum", feature = "esplora"))]
     fn get_asset_balance(&self, asset_id: &str) -> Balance {
         self.get_asset_balance_result(asset_id).unwrap()
     }
@@ -641,7 +641,7 @@ pub(crate) trait OfflineSigParty {
         self.wlt_mut().list_transactions(None, true).unwrap()
     }
 
-    #[cfg(feature = "electrum")]
+    #[cfg(any(feature = "electrum", feature = "esplora"))]
     fn list_transfers(&self, asset_id: Option<&str>) -> Vec<Transfer> {
         self.list_transfers_result(asset_id).unwrap()
     }
@@ -999,7 +999,7 @@ pub(crate) trait SinglesigWalletParty {
         file_path: Option<String>,
     ) -> Result<AssetCFA, Error>;
 
-    #[cfg(feature = "electrum")]
+    #[cfg(any(feature = "electrum", feature = "esplora"))]
     fn issue_asset_ifa(
         &mut self,
         amounts: Option<&[u64]>,
@@ -1007,7 +1007,7 @@ pub(crate) trait SinglesigWalletParty {
         reject_list_url: Option<String>,
     ) -> AssetIFA;
 
-    #[cfg(feature = "electrum")]
+    #[cfg(any(feature = "electrum", feature = "esplora"))]
     fn issue_asset_ifa_result(
         &mut self,
         amounts: Option<&[u64]>,
@@ -1176,7 +1176,7 @@ impl<T: OfflineSigParty<W = Wallet>> SinglesigWalletParty for T {
         )
     }
 
-    #[cfg(feature = "electrum")]
+    #[cfg(any(feature = "electrum", feature = "esplora"))]
     fn issue_asset_ifa(
         &mut self,
         amounts: Option<&[u64]>,
@@ -1187,7 +1187,7 @@ impl<T: OfflineSigParty<W = Wallet>> SinglesigWalletParty for T {
             .unwrap()
     }
 
-    #[cfg(feature = "electrum")]
+    #[cfg(any(feature = "electrum", feature = "esplora"))]
     fn issue_asset_ifa_result(
         &mut self,
         amounts: Option<&[u64]>,
@@ -1279,7 +1279,7 @@ impl SinglesigParty {
         self.wallet.get_keys()
     }
 
-    #[cfg(feature = "electrum")]
+    #[cfg(any(feature = "electrum", feature = "esplora"))]
     pub(crate) fn burn(&mut self, asset_id: &str, amount: u64) -> OperationResult {
         self.burn_result(asset_id, amount).unwrap()
     }
@@ -1305,7 +1305,7 @@ impl SinglesigParty {
         )
     }
 
-    #[cfg(feature = "electrum")]
+    #[cfg(any(feature = "electrum", feature = "esplora"))]
     pub(crate) fn burn_result(
         &mut self,
         asset_id: &str,

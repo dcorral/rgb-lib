@@ -936,3 +936,35 @@ impl DbTxn {
 }
 
 pub(crate) mod enums;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const RID: &str = "wvout:BczOakzm-uHua56v-znf1Q~A-BTRpWDb";
+
+    #[test]
+    fn transfer_proxy_recipient_id_uses_stored_nonce() {
+        let mut transfer = DbTransfer {
+            idx: 0,
+            asset_transfer_idx: 0,
+            requested_assignment: None,
+            recipient_type: Some(RecipientTypeFull::Witness {
+                vout: None,
+                recipient_nonce: vec![1u8; 16],
+            }),
+            recipient_id: Some(RID.to_string()),
+            ack: None,
+            invoice_string: None,
+        };
+        assert_eq!(
+            transfer.proxy_recipient_id(),
+            derive_proxy_recipient_id(RID, &[1u8; 16])
+        );
+        transfer.recipient_type = Some(RecipientTypeFull::Witness {
+            vout: None,
+            recipient_nonce: vec![],
+        });
+        assert_eq!(transfer.proxy_recipient_id(), RID);
+    }
+}

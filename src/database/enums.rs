@@ -504,13 +504,52 @@ mod tests {
                 vout: 0,
             },
         };
-        let witness = RecipientTypeFull::Witness { vout: Some(1) };
-        let witness_none = RecipientTypeFull::Witness { vout: None };
+        let witness = RecipientTypeFull::Witness {
+            vout: Some(1),
+            recipient_nonce: vec![7, 8, 9],
+        };
+        let witness_none = RecipientTypeFull::Witness {
+            vout: None,
+            recipient_nonce: vec![],
+        };
         for recipient in [blind, witness, witness_none] {
             let value: Value = recipient.clone().into();
             let recovered = RecipientTypeFull::try_from(value).unwrap();
             assert_eq!(recipient, recovered);
         }
+
+        // an empty nonce is not serialized, keeping the pre-nonce on-disk shape
+        let json = serde_json::to_value(RecipientTypeFull::Witness {
+            vout: Some(1),
+            recipient_nonce: vec![],
+        })
+        .unwrap();
+        assert_eq!(json, serde_json::json!({ "Witness": { "vout": 1 } }));
+        let witness = RecipientTypeFull::Witness {
+            vout: Some(1),
+            recipient_nonce: vec![7, 8, 9],
+        };
+        let json = serde_json::to_value(witness.clone()).unwrap();
+        assert_eq!(
+            json["Witness"]["recipient_nonce"],
+            serde_json::json!([7, 8, 9])
+        );
+        assert_eq!(
+            serde_json::from_value::<RecipientTypeFull>(json).unwrap(),
+            witness
+        );
+
+        // legacy JSON without the nonce field deserializes with an empty nonce
+        let legacy = Value::Json(Some(Box::new(
+            serde_json::json!({ "Witness": { "vout": 1 } }),
+        )));
+        assert_eq!(
+            RecipientTypeFull::try_from(legacy).unwrap(),
+            RecipientTypeFull::Witness {
+                vout: Some(1),
+                recipient_nonce: vec![]
+            }
+        );
 
         // try from value: not JSON
         let value = Value::Int(Some(42));

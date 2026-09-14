@@ -1355,3 +1355,67 @@ mod tests {
         assert_eq!(rust_bitcoin_network, bitcoin::Network::Signet);
     }
 }
+
+#[cfg(test)]
+mod tests_proxy_recipient_id {
+    use super::*;
+
+    const RID: &str = "wvout:BczOakzm-uHua56v-znf1Q~A-BTRpWDb";
+
+    #[test]
+    fn empty_nonce_keeps_recipient_id() {
+        assert_eq!(derive_proxy_recipient_id(RID, &[]), RID);
+    }
+
+    #[test]
+    fn nonce_gives_distinct_stable_hex_keys() {
+        let a = derive_proxy_recipient_id(RID, &[1u8; 16]);
+        let b = derive_proxy_recipient_id(RID, &[2u8; 16]);
+        assert_eq!(a.len(), 64);
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(a, b);
+        // golden vector: this is the key posted to the proxy, changing it breaks in-flight invoices
+        assert_eq!(
+            a,
+            "facf75f7c854ec118a0783569226d4b2ebf363513c4bc5b391447c0ee254c809"
+        );
+    }
+
+    #[cfg(any(feature = "electrum", feature = "esplora"))]
+    #[test]
+    fn nonce_round_trips_through_url() {
+        let url = "rpcs://proxy.example.com/0.2/json-rpc";
+        let nonce = [0xabu8; RECIPIENT_NONCE_LEN];
+        let decorated = append_recipient_nonce(url, &nonce);
+        assert_eq!(decorated, format!("{url}?rid_nonce={}", "ab".repeat(16)));
+        assert_eq!(
+            extract_recipient_nonce(&decorated).unwrap(),
+            (url.to_string(), Some(nonce.to_vec()))
+        );
+        assert_eq!(
+            extract_recipient_nonce(url).unwrap(),
+            (url.to_string(), None)
+        );
+    }
+
+    #[cfg(any(feature = "electrum", feature = "esplora"))]
+    #[test]
+    fn malformed_nonce_is_rejected() {
+        let url = "rpcs://proxy.example.com/0.2/json-rpc";
+        for bad in [
+            "zz".repeat(16),
+            "ab".repeat(15) + "a",
+            "ab".repeat(17),
+            "ab".repeat(16) + "&x=y",
+            String::new(),
+        ] {
+            assert!(
+                matches!(
+                    extract_recipient_nonce(&format!("{url}?rid_nonce={bad}")),
+                    Err(Error::InvalidTransportEndpoints { .. })
+                ),
+                "{bad}"
+            );
+        }
+    }
+}
