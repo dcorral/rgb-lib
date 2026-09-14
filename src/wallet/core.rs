@@ -39,6 +39,8 @@ pub(crate) struct WalletManifest {
     pub(crate) database_type: DatabaseType,
     pub(crate) max_allocations_per_utxo: u32,
     pub(crate) supported_schemas: Vec<AssetSchema>,
+    #[serde(default)]
+    pub(crate) reuse_addresses: bool,
     pub(crate) account_xpub_vanilla: String,
     pub(crate) account_xpub_colored: String,
     pub(crate) vanilla_keychain: u8,
@@ -54,6 +56,7 @@ impl WalletManifest {
             database_type: wallet_data.database_type.clone(),
             max_allocations_per_utxo: wallet_data.max_allocations_per_utxo,
             supported_schemas: wallet_data.supported_schemas.clone(),
+            reuse_addresses: wallet_data.reuse_addresses,
             account_xpub_vanilla: keys.account_xpub_vanilla.clone(),
             account_xpub_colored: keys.account_xpub_colored.clone(),
             vanilla_keychain: keys.vanilla_keychain.unwrap_or(KEYCHAIN_BTC),
@@ -144,6 +147,7 @@ impl WalletManifest {
                 database_type: self.database_type,
                 max_allocations_per_utxo: self.max_allocations_per_utxo,
                 supported_schemas: self.supported_schemas,
+                reuse_addresses: self.reuse_addresses,
             },
             SinglesigKeys {
                 account_xpub_vanilla: self.account_xpub_vanilla,
@@ -655,25 +659,66 @@ pub trait WalletCore {
         Ok(())
     }
 
+    /// Whether `txid` spends any of this wallet's own outputs. A witness payment never does: it
+    /// is funded by the sender.
+    #[cfg(any(feature = "electrum", feature = "esplora"))]
+    fn spends_own_inputs(&self, txid: Txid) -> bool {
+        let bdk_wallet = self.bdk_wallet();
+        bdk_wallet
+            .tx_graph()
+            .get_tx(txid)
+            .map(|tx| bdk_wallet.sent_and_received(&tx).0 > BdkAmount::ZERO)
+            .unwrap_or(false)
+    }
+
     #[cfg(any(feature = "electrum", feature = "esplora"))]
     fn update_db_colored_txos_from_bdk(
         &mut self,
         txn: &DbTxn,
         include_spent: bool,
     ) -> Result<(), Error> {
-        let db_txos = txn.iter_txos()?;
-
-        let db_outpoints: HashSet<String> = db_txos
-            .into_iter()
+        let db_outpoints: HashSet<String> = txn
+            .iter_txos()?
+            .iter()
             .filter(|t| t.exists && (include_spent || !t.spent))
             .map(|u| u.outpoint().to_string())
             .collect();
 
-        let pending_witness_scripts: Vec<String> = txn
-            .iter_pending_witness_scripts()?
-            .into_iter()
-            .map(|s| s.script)
-            .collect();
+        // the watch list follows the transfers: a script stays watched while an incoming witness
+        // transfer on it is neither settled nor failed (the settle path relies on the fast sync of
+        // that script), so rotated pins and expired invoices are released here and toggling the
+        // reuse flag cannot drop protection
+        let mut pending_witness_scripts: HashSet<String> = HashSet::new();
+        let watch_rows = txn.iter_pending_witness_scripts()?;
+        if !watch_rows.is_empty() {
+            let batch_transfers = txn.iter_batch_transfers()?;
+            let asset_transfers = txn.iter_asset_transfers()?;
+            let transfers = txn.iter_transfers()?;
+            let active_scripts: HashSet<String> = batch_transfers
+                .iter()
+                .filter(|bt| bt.incoming && !bt.status.settled() && !bt.failed())
+                .filter_map(|bt| {
+                    let (_, t) = bt
+                        .get_incoming_transfer(&asset_transfers, &transfers)
+                        .ok()?;
+                    let rid = t.recipient_id?;
+                    match script_buf_from_recipient_id(rid.clone()) {
+                        Ok(s) => s.map(|s| s.to_hex_string()),
+                        Err(e) => {
+                            warn!(self.logger(), "Skipping recipient ID {rid}: {e}");
+                            None
+                        }
+                    }
+                })
+                .collect();
+            for pws in watch_rows {
+                if active_scripts.contains(&pws.script) {
+                    pending_witness_scripts.insert(pws.script);
+                } else {
+                    txn.del_pending_witness_script(pws.script)?;
+                }
+            }
+        }
 
         let iter: Box<dyn Iterator<Item = LocalOutput>> = if include_spent {
             Box::new(self.bdk_wallet().list_output())
@@ -686,14 +731,14 @@ pub trait WalletCore {
             .filter(|u| !db_outpoints.contains(&u.outpoint.to_string()))
         {
             let mut new_db_utxo: DbTxoActMod = new_utxo.clone().into();
-            if !pending_witness_scripts.is_empty() {
-                let pending_witness_script = new_utxo.txout.script_pubkey.to_hex_string();
-                if pending_witness_scripts.contains(&pending_witness_script) {
-                    new_db_utxo.pending_witness = ActiveValue::Set(true);
-                    txn.del_pending_witness_script(pending_witness_script)?;
-                }
+            // an output on a watched script that spends this wallet's own coins is change or a
+            // created UTXO, not a witness payment
+            if pending_witness_scripts.contains(&new_utxo.txout.script_pubkey.to_hex_string())
+                && !self.spends_own_inputs(new_utxo.outpoint.txid)
+            {
+                new_db_utxo.pending_witness = ActiveValue::Set(true);
             }
-            txn.set_txo(new_db_utxo.clone())?;
+            txn.set_txo(new_db_utxo)?;
         }
 
         Ok(())

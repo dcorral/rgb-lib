@@ -53,6 +53,7 @@
 //!         database_type: DatabaseType::Sqlite,
 //!         max_allocations_per_utxo: 5,
 //!         supported_schemas: vec![AssetSchema::Nia],
+//!         reuse_addresses: false,
 //!     };
 //!     let wallet = Wallet::new(wallet_data, single_sig_keys)?;
 //!
@@ -79,6 +80,7 @@
 //!         database_type: DatabaseType::Sqlite,
 //!         max_allocations_per_utxo: 5,
 //!         supported_schemas: vec![AssetSchema::Nia],
+//!         reuse_addresses: false,
 //!     };
 //!     let wallet = Wallet::new(wallet_data, SinglesigKeys::from_keys(&keys, None))?;
 //!     drop(wallet);
@@ -305,8 +307,8 @@ use crate::{
     },
     error::IndexerError,
     utils::{
-        INDEXER_STOP_GAP, OffchainResolver, check_proxy, get_indexer_and_resolver, hash_file,
-        script_buf_from_recipient_id,
+        INDEXER_STOP_GAP, OffchainResolver, check_proxy, extract_recipient_nonce,
+        get_indexer_and_resolver, hash_file, script_buf_from_recipient_id,
     },
     wallet::{AssignmentsCollection, Indexer, multisig::RespondToOperation},
 };
@@ -340,8 +342,9 @@ use crate::{
     error::InternalError,
     keys::{Keys, WitnessVersion},
     utils::{
-        ACCOUNT, DumbResolver, KEYCHAIN_BTC, KEYCHAIN_RGB, LOG_FILE, PURPOSE, RgbRuntime,
-        adjust_canonicalization, beneficiary_from_script_buf, from_str_or_number_mandatory,
+        ACCOUNT, DumbResolver, KEYCHAIN_BTC, KEYCHAIN_RGB, LOG_FILE, PURPOSE, RECIPIENT_NONCE_LEN,
+        RECIPIENT_NONCE_QUERY, RgbRuntime, adjust_canonicalization, append_recipient_nonce,
+        beneficiary_from_script_buf, derive_proxy_recipient_id, from_str_or_number_mandatory,
         from_str_or_number_optional, get_account_xpubs, get_coin_type, get_descriptors,
         get_descriptors_from_xpubs, hash_bytes, hash_bytes_hex, load_rgb_runtime, now,
         parse_address_str, setup_logger, str_to_xpub, sync_dir,

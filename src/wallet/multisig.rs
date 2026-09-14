@@ -220,23 +220,7 @@ impl WalletCore for MultisigWallet {
         include_spent: bool,
     ) -> Result<(), Error> {
         // sync addresses
-        let response = self.hub_client().get_current_address_indices()?;
-        let bdk_wallet = self.bdk_wallet_mut();
-        let mut reveal = |keychain_kind: KeychainKind, index: Option<u32>| {
-            if let Some(hub_index) = index {
-                let local_index = bdk_wallet
-                    .derivation_index(keychain_kind)
-                    .map(|i| i as i64)
-                    .unwrap_or(-1);
-                if local_index < hub_index as i64 {
-                    for _ in local_index..hub_index as i64 {
-                        bdk_wallet.reveal_next_address(keychain_kind);
-                    }
-                }
-            }
-        };
-        reveal(KeychainKind::Internal, response.internal);
-        reveal(KeychainKind::External, response.external);
+        self.reveal_to_hub_indices()?;
         // sync UTXOs
         self.sync_bdk_and_db_txos(txn, options, include_spent)
     }
@@ -246,19 +230,33 @@ impl WalletBackup for MultisigWallet {}
 
 impl WalletOffline for MultisigWallet {
     #[cfg(any(feature = "electrum", feature = "esplora"))]
-    fn get_new_addresses(
+    fn reveal_next_addresses(
         &mut self,
         keychain: KeychainKind,
         count: u32,
     ) -> Result<BdkAddress, Error> {
         let is_internal = keychain == KeychainKind::Internal;
-        let start_index = self.hub_client().bump_address_indices(count, is_internal)?;
-        let local_index = self.bdk_wallet().derivation_index(keychain).unwrap_or(0);
+        let local_last_revealed = self.bdk_wallet().derivation_index(keychain);
+        // The hub must advance on every bump. Wallets created by the old off-by-one local reveal
+        // code can have the local last revealed index one ahead of the hub, so the first bump may
+        // hand out an index that is already revealed (and, under address reuse, pinned) locally:
+        // bump again until the reserved range starts beyond the local index.
+        let mut start_index = self.hub_client().bump_address_indices(count, is_internal)?;
+        while local_last_revealed.is_some_and(|i| start_index <= i) {
+            let next = self.hub_client().bump_address_indices(count, is_internal)?;
+            if next <= start_index {
+                return Err(Error::MultisigHubService {
+                    details: s!("address index did not advance"),
+                });
+            }
+            start_index = next;
+        }
+        let revealed_count = local_last_revealed.map_or(0, |i| i + 1);
         let target_index = start_index
             .checked_add(count)
             .expect("address derivation index cannot exceed u32::MAX");
         let bdk_wallet = self.bdk_wallet_mut();
-        for _ in local_index..target_index {
+        for _ in revealed_count..target_index {
             bdk_wallet.reveal_next_address(keychain);
         }
         let first_address = bdk_wallet.peek_address(keychain, start_index).address;
@@ -1107,6 +1105,27 @@ impl MultisigWallet {
         Ok(())
     }
 
+    /// Reveal addresses locally up to the indices currently recorded by the hub, so this cosigner
+    /// sees every address any cosigner has handed out.
+    fn reveal_to_hub_indices(&mut self) -> Result<(), Error> {
+        let response = self.hub_client().get_current_address_indices()?;
+        let bdk_wallet = self.bdk_wallet_mut();
+        for (keychain, hub_index) in [
+            (KeychainKind::Internal, response.internal),
+            (KeychainKind::External, response.external),
+        ] {
+            let Some(hub_index) = hub_index else { continue };
+            let local_index = bdk_wallet
+                .derivation_index(keychain)
+                .map(|i| i as i64)
+                .unwrap_or(-1);
+            for _ in local_index..hub_index as i64 {
+                bdk_wallet.reveal_next_address(keychain);
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn hub_client(&self) -> &MultisigHubClient {
         self.online_data()
             .as_ref()
@@ -1176,16 +1195,43 @@ impl MultisigWallet {
     ///
     /// This method generates a new address using the index atomically retrieved from the hub.
     /// This ensures all cosigners maintain consistent address derivation indices.
+    ///
+    /// With `reuse_addresses` enabled this returns the pinned (last revealed) vanilla address
+    /// instead of a new one; use [`MultisigWallet::rotate_vanilla_address`] to move the pin
+    /// forward.
     pub fn get_address(&mut self, online: Online) -> Result<String, Error> {
         info!(self.logger(), "Getting address...");
         self.check_online(online)?;
         self.check_is_cosigner()?;
+        if self.wallet_data().reuse_addresses {
+            self.reveal_to_hub_indices()?;
+        }
         let address = self.get_new_addresses(KeychainKind::Internal, 1)?;
         let txn = self.database().begin_transaction()?;
         self.update_backup_info(&txn, false)?;
         self.persist_and_commit(txn)?;
         info!(self.logger(), "Get address completed");
         Ok(address.to_string())
+    }
+
+    /// Reveal a fresh vanilla (BTC) address and make it the pinned one. The new index comes from
+    /// the hub, so every cosigner moves to the same address on its next sync.
+    ///
+    /// Only available when `reuse_addresses` is enabled.
+    pub fn rotate_vanilla_address(&mut self, online: Online) -> Result<String, Error> {
+        self.check_online(online)?;
+        self.check_is_cosigner()?;
+        self.rotate_address(KeychainKind::Internal)
+    }
+
+    /// Reveal a fresh colored (RGB) address and make it the pinned one. The new index comes from
+    /// the hub, so every cosigner moves to the same address on its next sync.
+    ///
+    /// Only available when `reuse_addresses` is enabled.
+    pub fn rotate_colored_address(&mut self, online: Online) -> Result<String, Error> {
+        self.check_online(online)?;
+        self.check_is_cosigner()?;
+        self.rotate_address(KeychainKind::External)
     }
 
     /// Return the existing or freshly generated wallet [`Online`] data.
@@ -1463,6 +1509,12 @@ impl MultisigWallet {
             return Err(Error::UnsupportedTransportType);
         }
 
+        // another cosigner may have rotated the colored pin: catch up with the hub so the invoice
+        // lands on the current pin (a blind receive requests no address)
+        if recipient_type == RecipientType::Witness && self.wallet_data().reuse_addresses {
+            self.reveal_to_hub_indices()?;
+        }
+
         let txn = self.database().begin_transaction()?;
 
         // shared receive data creation logic
@@ -1578,7 +1630,8 @@ impl MultisigWallet {
     /// [`RgbTransport`](https://docs.rs/rgb-invoicing/latest/rgbinvoice/enum.RgbTransport.html).
     /// At the moment the only supported variant is JsonRpc (e.g. `rpc://127.0.0.1` or
     /// `rpcs://example.com`). The out-of-band exchange (requested with an empty list) is not
-    /// supported for multisig wallets and results in an error.
+    /// supported for multisig wallets and results in an error; out-of-band witness receive is
+    /// also not available when `reuse_addresses` is enabled.
     ///
     /// The `min_confirmations` number determines the minimum number of confirmations needed for
     /// the transaction anchoring the transfer for it to be considered final and move (while
@@ -1742,7 +1795,18 @@ impl MultisigWallet {
         let invoice = Invoice::new(receive_metadata.invoice.clone())?;
         let invoice_data = invoice.invoice_data();
         let recipient_id = invoice_data.recipient_id.clone();
-        let endpoints = self.convert_transport_endpoints(&invoice_data.transport_endpoints)?;
+        // strip the per-invoice nonce from the endpoint URLs and keep it on the transfer, so this
+        // cosigner derives the same proxy key as the initiator
+        let (bare_endpoints, nonces): (Vec<String>, Vec<Option<Vec<u8>>>) = invoice_data
+            .transport_endpoints
+            .iter()
+            .map(|ep| extract_recipient_nonce(ep))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .unzip();
+        // every endpoint of one invoice carries the same nonce, so the first one is taken
+        let recipient_nonce = nonces.into_iter().flatten().next().unwrap_or_default();
+        let endpoints = self.convert_transport_endpoints(&bare_endpoints)?;
 
         // parse data based on operation type
         let (blind_seal, recipient_type_full, script_pubkey) = match operation_type {
@@ -1765,7 +1829,10 @@ impl MultisigWallet {
             }
             OperationType::WitnessReceive => (
                 None,
-                RecipientTypeFull::Witness { vout: None },
+                RecipientTypeFull::Witness {
+                    vout: None,
+                    recipient_nonce,
+                },
                 Some(script_buf_from_recipient_id(invoice_data.recipient_id.clone())?.unwrap()),
             ),
             _ => unreachable!("only receive operations"),

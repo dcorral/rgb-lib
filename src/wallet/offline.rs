@@ -961,9 +961,29 @@ pub trait WalletOffline: WalletBackup {
                 (beneficiary, recipient_type_full, Some(blind_seal), None)
             }
             RecipientType::Witness => {
+                let reuse_addresses = self.wallet_data().reuse_addresses;
+                if transport_endpoints.is_empty() && reuse_addresses {
+                    // the paid invoice is identified by script alone out-of-band, which is
+                    // ambiguous once invoices share a script
+                    return Err(Error::InvalidTransportEndpoints {
+                        details: s!(
+                            "out-of-band witness invoices are not supported with address reuse"
+                        ),
+                    });
+                }
                 let script_pubkey = self.get_new_address()?.script_pubkey();
                 let beneficiary = beneficiary_from_script_buf(script_pubkey.clone());
-                let recipient_type_full = RecipientTypeFull::Witness { vout: None };
+                // under address reuse every witness invoice shares the script-derived recipient
+                // ID; a per-invoice nonce keeps the proxy key unique
+                let recipient_nonce = if reuse_addresses {
+                    rand::random::<[u8; RECIPIENT_NONCE_LEN]>().to_vec()
+                } else {
+                    vec![]
+                };
+                let recipient_type_full = RecipientTypeFull::Witness {
+                    vout: None,
+                    recipient_nonce,
+                };
                 (beneficiary, recipient_type_full, None, Some(script_pubkey))
             }
         };
@@ -985,10 +1005,36 @@ pub trait WalletOffline: WalletBackup {
         };
 
         let out_of_band = transport_endpoints.is_empty();
+        // the invoice endpoints carry the nonce, the endpoints stored on the transfer stay bare
+        let nonce: &[u8] = match &recipient_type_full {
+            RecipientTypeFull::Witness {
+                recipient_nonce, ..
+            } => recipient_nonce,
+            RecipientTypeFull::Blind { .. } => &[],
+        };
         let endpoints = if out_of_band {
             vec![]
         } else {
             self.check_transport_endpoints(&transport_endpoints)?;
+            // the nonce parameter is reserved on every wallet: a caller-supplied one would make
+            // the sender derive a proxy key this wallet never polls
+            if transport_endpoints
+                .iter()
+                .any(|ep| ep.contains(RECIPIENT_NONCE_QUERY))
+            {
+                return Err(Error::InvalidTransportEndpoints {
+                    details: s!(
+                        "transport endpoints cannot carry the reserved rid_nonce parameter"
+                    ),
+                });
+            }
+            if !nonce.is_empty() && transport_endpoints.iter().any(|ep| ep.contains('?')) {
+                return Err(Error::InvalidTransportEndpoints {
+                    details: s!(
+                        "transport endpoints cannot carry a query string when address reuse is enabled"
+                    ),
+                });
+            }
             let mut transport_endpoints_dedup = transport_endpoints.clone();
             transport_endpoints_dedup.sort();
             transport_endpoints_dedup.dedup();
@@ -1008,7 +1054,17 @@ pub trait WalletOffline: WalletBackup {
             invoice_builder = invoice_builder.set_contract(contract_id);
         }
         if !out_of_band {
-            let transports: Vec<&str> = transport_endpoints.iter().map(AsRef::as_ref).collect();
+            let decorated: Vec<String> = transport_endpoints
+                .iter()
+                .map(|ep| {
+                    if nonce.is_empty() {
+                        ep.clone()
+                    } else {
+                        append_recipient_nonce(ep, nonce)
+                    }
+                })
+                .collect();
+            let transports: Vec<&str> = decorated.iter().map(AsRef::as_ref).collect();
             invoice_builder = invoice_builder.add_transports(transports).unwrap();
         }
         let detected_assignment = match (&assignment, schema) {
@@ -1227,7 +1283,8 @@ pub trait WalletOffline: WalletBackup {
         Ok(transfers_changed)
     }
 
-    fn get_new_addresses(
+    /// Reveal `count` new addresses on `keychain` and return the first one.
+    fn reveal_next_addresses(
         &mut self,
         keychain: KeychainKind,
         _count: u32,
@@ -1235,8 +1292,56 @@ pub trait WalletOffline: WalletBackup {
         Ok(self.bdk_wallet_mut().reveal_next_address(keychain).address)
     }
 
+    /// Return an address on `keychain`: the last revealed one when address reuse is enabled, a
+    /// newly revealed one otherwise.
+    ///
+    /// Under reuse the pinned address is *defined* as the last revealed index, so nothing may
+    /// reveal addresses except rotation, the multisig hub catch-up and full scans (which only
+    /// reveal indices with on-chain history). BTC change is routed to the pin with `drain_to` for
+    /// the same reason. The `address_reuse::two_witness_transfers_settle_and_pins_hold` test
+    /// guards this invariant.
+    fn get_new_addresses(
+        &mut self,
+        keychain: KeychainKind,
+        count: u32,
+    ) -> Result<BdkAddress, Error> {
+        if self.wallet_data().reuse_addresses
+            && let Some(index) = self.bdk_wallet().derivation_index(keychain)
+        {
+            return Ok(self.bdk_wallet().peek_address(keychain, index).address);
+        }
+        self.reveal_next_addresses(keychain, count)
+    }
+
+    /// Shared body of the public rotation methods: reveal a fresh address on `keychain` and make
+    /// it the pinned one.
+    fn rotate_address(&mut self, keychain: KeychainKind) -> Result<String, Error> {
+        info!(self.logger(), "Rotating {keychain:?} address...");
+        if !self.wallet_data().reuse_addresses {
+            return Err(Error::AddressReuseDisabled);
+        }
+        let address = self.reveal_next_addresses(keychain, 1)?;
+        let txn = self.database().begin_transaction()?;
+        self.update_backup_info(&txn, false)?;
+        self.persist_and_commit(txn)?;
+        info!(self.logger(), "Rotate address completed");
+        Ok(address.to_string())
+    }
+
     fn get_new_address(&mut self) -> Result<BdkAddress, Error> {
         self.get_new_addresses(KeychainKind::External, 1)
+    }
+
+    /// Script that BTC change is sent to under address reuse (the pinned vanilla address).
+    /// `None` when reuse is off, in which case BDK picks a fresh vanilla address itself.
+    fn reuse_change_script(&mut self) -> Result<Option<ScriptBuf>, Error> {
+        if !self.wallet_data().reuse_addresses {
+            return Ok(None);
+        }
+        Ok(Some(
+            self.get_new_addresses(KeychainKind::Internal, 1)?
+                .script_pubkey(),
+        ))
     }
 
     fn get_asset_balance_impl(&self, txn: &DbTxn, asset_id: String) -> Result<Balance, Error> {
@@ -1997,7 +2102,7 @@ pub trait WalletOffline: WalletBackup {
             .collect();
         let receive_utxo = match &transfer.recipient_type {
             Some(RecipientTypeFull::Blind { unblinded_utxo }) => Some(unblinded_utxo.clone()),
-            Some(RecipientTypeFull::Witness { vout }) => {
+            Some(RecipientTypeFull::Witness { vout, .. }) => {
                 let received_txo_idx: Vec<i32> = filtered_coloring
                     .clone()
                     // issue coloring from inflation is considered as received
@@ -2045,7 +2150,7 @@ pub trait WalletOffline: WalletBackup {
                 TransferStatus::WaitingCounterparty,
             ) => None,
             (TransferKind::ReceiveBlind | TransferKind::ReceiveWitness, _) => {
-                Some(self.get_receive_consignment_path(&transfer.recipient_id.clone().unwrap()))
+                Some(self.get_receive_consignment_path(&transfer.proxy_recipient_id()))
             }
             (TransferKind::Issuance, _) => {
                 Some(self.get_issue_consignment_path(&asset_transfer.asset_id.clone().unwrap()))

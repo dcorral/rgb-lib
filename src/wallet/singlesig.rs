@@ -287,6 +287,9 @@ impl Wallet {
     }
 
     /// Return a new Bitcoin address from the vanilla wallet.
+    ///
+    /// With `reuse_addresses` enabled this returns the pinned (last revealed) vanilla address
+    /// instead of a new one; use [`Wallet::rotate_vanilla_address`] to move the pin forward.
     pub fn get_address(&mut self) -> Result<String, Error> {
         info!(self.logger(), "Getting address...");
         let address = self.get_new_addresses(KeychainKind::Internal, 1)?;
@@ -295,6 +298,22 @@ impl Wallet {
         self.persist_and_commit(txn)?;
         info!(self.logger(), "Get address completed");
         Ok(address.to_string())
+    }
+
+    /// Reveal a fresh vanilla (BTC) address and make it the one returned by [`Wallet::get_address`]
+    /// and used for BTC change.
+    ///
+    /// Only available when `reuse_addresses` is enabled.
+    pub fn rotate_vanilla_address(&mut self) -> Result<String, Error> {
+        self.rotate_address(KeychainKind::Internal)
+    }
+
+    /// Reveal a fresh colored (RGB) address and make it the one used for witness invoices and
+    /// colored outputs.
+    ///
+    /// Only available when `reuse_addresses` is enabled.
+    pub fn rotate_colored_address(&mut self) -> Result<String, Error> {
+        self.rotate_address(KeychainKind::External)
     }
 
     /// List the pending vanilla transactions that have reserved TXOs in the wallet.
@@ -571,7 +590,8 @@ impl Wallet {
     /// endpoints and the consignment and ACK are exchanged out-of-band (see
     /// [`provide_out_of_band_consignment`](Wallet::provide_out_of_band_consignment) and
     /// [`provide_out_of_band_ack`](Wallet::provide_out_of_band_ack)), without using automated
-    /// transport endpoints.
+    /// transport endpoints. Out-of-band witness receive is not available when `reuse_addresses`
+    /// is enabled; an empty list then returns [`Error::InvalidTransportEndpoints`].
     ///
     /// The `min_confirmations` number determines the minimum number of confirmations needed for
     /// the transaction anchoring the transfer for it to be considered final and move (while

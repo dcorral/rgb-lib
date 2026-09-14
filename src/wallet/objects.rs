@@ -31,6 +31,16 @@ pub struct WalletData {
     /// List of schemas the wallet should support (when issuing, sending and receiving). Empty list
     /// means the wallet should support all the schemas rgb-lib supports.
     pub supported_schemas: Vec<AssetSchema>,
+    /// When `true`, address generation returns the last revealed address of each keychain instead
+    /// of revealing a new one. Use `rotate_vanilla_address` / `rotate_colored_address` to move to a
+    /// fresh address.
+    ///
+    /// Default: `false`
+    ///
+    /// **Privacy:** every payment to the same keychain becomes linkable on chain. Enable only when
+    /// address reuse is acceptable (e.g. a stable deposit address).
+    #[serde(default)]
+    pub reuse_addresses: bool,
 }
 
 /// Descriptors for an RGB wallet.

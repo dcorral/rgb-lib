@@ -146,7 +146,12 @@ pub enum RecipientTypeFull {
     /// Receive via blinded UTXO
     Blind { unblinded_utxo: Outpoint },
     /// Receive via witness TX
-    Witness { vout: Option<u32> },
+    Witness {
+        vout: Option<u32>,
+        /// Per-invoice random bytes mixed into the proxy routing key; empty when unused
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        recipient_nonce: Vec<u8>,
+    },
 }
 
 impl From<RecipientTypeFull> for Value {
