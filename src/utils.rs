@@ -646,6 +646,47 @@ pub(crate) fn hash_bytes_hex(data: &[u8]) -> String {
     hex::encode(hash_bytes(data))
 }
 
+pub(crate) const RECIPIENT_NONCE_QUERY: &str = "?rid_nonce=";
+pub(crate) const RECIPIENT_NONCE_LEN: usize = 16;
+const PROXY_RECIPIENT_TAG: &[u8] = b"rgb-lib proxy recipient v1";
+
+/// Key a transfer's consignment is exchanged under on the proxy: the recipient ID itself when
+/// `nonce` is empty, otherwise the hex SHA-256 of a domain tag, recipient ID and nonce. Witness
+/// invoices issued under address reuse share a recipient ID, and the proxy requires a unique key
+/// per consignment.
+pub(crate) fn derive_proxy_recipient_id(recipient_id: &str, nonce: &[u8]) -> String {
+    if nonce.is_empty() {
+        return recipient_id.to_string();
+    }
+    // the tag keeps this hash apart from every other SHA-256 use of a recipient ID; the nonce is
+    // a fixed 16-byte suffix whenever it is non-empty, so the unframed concatenation cannot
+    // collide across distinct pairs
+    hash_bytes_hex(&[PROXY_RECIPIENT_TAG, recipient_id.as_bytes(), nonce].concat())
+}
+
+/// Append the per-invoice nonce to a transport endpoint URL. Invoice endpoints never carry a
+/// query string of their own.
+pub(crate) fn append_recipient_nonce(url: &str, nonce: &[u8]) -> String {
+    format!("{url}{RECIPIENT_NONCE_QUERY}{}", hex::encode(nonce))
+}
+
+/// Split a transport endpoint URL into the bare URL and the `rid_nonce` value, if any. A present
+/// nonce must be exactly 16 bytes of hex with nothing after it.
+#[cfg(any(feature = "electrum", feature = "esplora"))]
+pub(crate) fn extract_recipient_nonce(url: &str) -> Result<(String, Option<Vec<u8>>), Error> {
+    let Some((base, nonce)) = url.split_once(RECIPIENT_NONCE_QUERY) else {
+        return Ok((url.to_string(), None));
+    };
+    let malformed = || Error::InvalidTransportEndpoints {
+        details: s!("malformed rid_nonce on transport endpoint"),
+    };
+    if nonce.len() != 2 * RECIPIENT_NONCE_LEN {
+        return Err(malformed());
+    }
+    let nonce = hex::decode(nonce).map_err(|_| malformed())?;
+    Ok((base.to_string(), Some(nonce)))
+}
+
 #[cfg(any(feature = "electrum", feature = "esplora"))]
 pub(crate) fn hash_file(path: &Path) -> Result<String, Error> {
     let mut file = fs::File::open(path)?;
@@ -1312,5 +1353,69 @@ mod tests {
         let network = BitcoinNetwork::SignetCustom;
         let rust_bitcoin_network = bitcoin::Network::from(network);
         assert_eq!(rust_bitcoin_network, bitcoin::Network::Signet);
+    }
+}
+
+#[cfg(test)]
+mod tests_proxy_recipient_id {
+    use super::*;
+
+    const RID: &str = "wvout:BczOakzm-uHua56v-znf1Q~A-BTRpWDb";
+
+    #[test]
+    fn empty_nonce_keeps_recipient_id() {
+        assert_eq!(derive_proxy_recipient_id(RID, &[]), RID);
+    }
+
+    #[test]
+    fn nonce_gives_distinct_stable_hex_keys() {
+        let a = derive_proxy_recipient_id(RID, &[1u8; 16]);
+        let b = derive_proxy_recipient_id(RID, &[2u8; 16]);
+        assert_eq!(a.len(), 64);
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(a, b);
+        // golden vector: this is the key posted to the proxy, changing it breaks in-flight invoices
+        assert_eq!(
+            a,
+            "facf75f7c854ec118a0783569226d4b2ebf363513c4bc5b391447c0ee254c809"
+        );
+    }
+
+    #[cfg(any(feature = "electrum", feature = "esplora"))]
+    #[test]
+    fn nonce_round_trips_through_url() {
+        let url = "rpcs://proxy.example.com/0.2/json-rpc";
+        let nonce = [0xabu8; RECIPIENT_NONCE_LEN];
+        let decorated = append_recipient_nonce(url, &nonce);
+        assert_eq!(decorated, format!("{url}?rid_nonce={}", "ab".repeat(16)));
+        assert_eq!(
+            extract_recipient_nonce(&decorated).unwrap(),
+            (url.to_string(), Some(nonce.to_vec()))
+        );
+        assert_eq!(
+            extract_recipient_nonce(url).unwrap(),
+            (url.to_string(), None)
+        );
+    }
+
+    #[cfg(any(feature = "electrum", feature = "esplora"))]
+    #[test]
+    fn malformed_nonce_is_rejected() {
+        let url = "rpcs://proxy.example.com/0.2/json-rpc";
+        for bad in [
+            "zz".repeat(16),
+            "ab".repeat(15) + "a",
+            "ab".repeat(17),
+            "ab".repeat(16) + "&x=y",
+            String::new(),
+        ] {
+            assert!(
+                matches!(
+                    extract_recipient_nonce(&format!("{url}?rid_nonce={bad}")),
+                    Err(Error::InvalidTransportEndpoints { .. })
+                ),
+                "{bad}"
+            );
+        }
     }
 }

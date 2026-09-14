@@ -1752,3 +1752,185 @@ fn send_to_oneself() {
         (AMOUNT_SMALL, AMOUNT_SMALL, AMOUNT_SMALL),
     );
 }
+
+#[cfg(feature = "electrum")]
+#[test]
+#[serial]
+fn address_reuse() {
+    initialize();
+    op_counter_reset();
+
+    let bitcoin_network = BitcoinNetwork::Regtest;
+    let random_str: String = rand::rng()
+        .sample_iter(&Alphanumeric)
+        .take(6)
+        .map(char::from)
+        .collect();
+    let wlt_1_keys = generate_keys(bitcoin_network, WitnessVersion::Taproot);
+    let wlt_2_keys = generate_keys(bitcoin_network, WitnessVersion::Taproot);
+    let cosigners = vec![
+        Cosigner::from_keys(&wlt_1_keys, None),
+        Cosigner::from_keys(&wlt_2_keys, None),
+    ];
+    let cosigner_xpubs: Vec<String> = cosigners
+        .iter()
+        .map(|c| c.account_xpub_colored.clone())
+        .collect();
+    let root_keypair = KeyPair::new();
+    let tokens: Vec<String> = cosigner_xpubs
+        .iter()
+        .map(|x| create_token(&root_keypair, Role::Cosigner(x.clone()), None))
+        .collect();
+    write_hub_config(
+        &cosigner_xpubs,
+        2,
+        2,
+        root_keypair.public().to_bytes_hex(),
+        None,
+    );
+    restart_multisig_hub();
+
+    let multisig_keys = MultisigKeys::new(cosigners, 2, 2);
+    let mut wlt_1 = get_test_ms_wallet_opts(&multisig_keys, format!("{random_str}_1"), true);
+    let online_1 = ms_go_online(&mut wlt_1, &tokens[0]);
+    let mut wlt_2 = get_test_ms_wallet_opts(&multisig_keys, format!("{random_str}_2"), true);
+    let online_2 = ms_go_online(&mut wlt_2, &tokens[1]);
+
+    // both cosigners pin the same address, repeatedly
+    let addr_1 = wlt_1.get_address(online_1).unwrap();
+    let colored_1 = wlt_1.get_new_address().unwrap().to_string();
+    assert_eq!(wlt_1.get_address(online_1).unwrap(), addr_1);
+    assert_eq!(wlt_2.get_address(online_2).unwrap(), addr_1);
+
+    // rotation on one cosigner is picked up by the other through the hub
+    let rotated = wlt_1.rotate_vanilla_address(online_1).unwrap();
+    assert_ne!(rotated, addr_1);
+    assert_eq!(wlt_1.get_address(online_1).unwrap(), rotated);
+    assert_eq!(wlt_2.get_address(online_2).unwrap(), rotated);
+
+    // same for the colored keychain: the other cosigner's next witness invoice lands on the
+    // rotated pin, since the receive path catches up with the hub first
+    let rotated_colored = wlt_1.rotate_colored_address(online_1).unwrap();
+    assert_ne!(rotated_colored, colored_1);
+    let receive_data = wlt_2
+        .witness_receive(
+            online_2,
+            None,
+            Assignment::Any,
+            default_rcv_expiration(),
+            TRANSPORT_ENDPOINTS.clone(),
+            MIN_CONFIRMATIONS,
+        )
+        .unwrap();
+    let rotated_script = BdkAddress::from_str(&rotated_colored)
+        .unwrap()
+        .assume_checked()
+        .script_pubkey();
+    assert_eq!(
+        script_buf_from_recipient_id(receive_data.recipient_id).unwrap(),
+        Some(rotated_script)
+    );
+    assert_eq!(
+        wlt_2.get_new_address().unwrap().to_string(),
+        rotated_colored
+    );
+}
+
+#[cfg(feature = "electrum")]
+#[test]
+#[serial]
+fn address_reuse_witness_receive() {
+    initialize();
+    op_counter_reset();
+
+    let bitcoin_network = BitcoinNetwork::Regtest;
+    let random_str: String = rand::rng()
+        .sample_iter(&Alphanumeric)
+        .take(6)
+        .map(char::from)
+        .collect();
+    let wlt_1_keys = generate_keys(bitcoin_network, WitnessVersion::Taproot);
+    let wlt_2_keys = generate_keys(bitcoin_network, WitnessVersion::Taproot);
+    let cosigners = vec![
+        Cosigner::from_keys(&wlt_1_keys, None),
+        Cosigner::from_keys(&wlt_2_keys, None),
+    ];
+    let cosigner_xpubs: Vec<String> = cosigners
+        .iter()
+        .map(|c| c.account_xpub_colored.clone())
+        .collect();
+    let root_keypair = KeyPair::new();
+    let tokens: Vec<String> = cosigner_xpubs
+        .iter()
+        .map(|x| create_token(&root_keypair, Role::Cosigner(x.clone()), None))
+        .collect();
+    write_hub_config(
+        &cosigner_xpubs,
+        2,
+        2,
+        root_keypair.public().to_bytes_hex(),
+        None,
+    );
+    restart_multisig_hub();
+
+    let multisig_keys = MultisigKeys::new(cosigners, 2, 2);
+    let mut wlt_1_multisig =
+        get_test_ms_wallet_opts(&multisig_keys, format!("{random_str}_1"), true);
+    let online_1 = ms_go_online(&mut wlt_1_multisig, &tokens[0]);
+    let mut wlt_2_multisig =
+        get_test_ms_wallet_opts(&multisig_keys, format!("{random_str}_2"), true);
+    let online_2 = ms_go_online(&mut wlt_2_multisig, &tokens[1]);
+    let wlt_1_singlesig = get_test_wallet_with_keys(&wlt_1_keys);
+    let wlt_2_singlesig = get_test_wallet_with_keys(&wlt_2_keys);
+    let mut wlt_1 = ms_party!(
+        &wlt_1_singlesig,
+        &mut wlt_1_multisig,
+        online_1,
+        &cosigner_xpubs[0]
+    );
+    let mut wlt_2 = ms_party!(
+        &wlt_2_singlesig,
+        &mut wlt_2_multisig,
+        online_2,
+        &cosigner_xpubs[1]
+    );
+
+    // the initiator issues a witness invoice, the other cosigner imports it from the hub
+    let receive_data = wlt_1.witness_receive_res().unwrap();
+    op_counter_bump();
+    sync_wallets_full(&mut [&mut wlt_2]);
+
+    // the invoice carries the nonce
+    let endpoints = Invoice::new(receive_data.invoice.clone())
+        .unwrap()
+        .invoice_data()
+        .transport_endpoints;
+    let (_, nonce) = extract_recipient_nonce(&endpoints[0]).unwrap();
+    let nonce = nonce.expect("reuse invoices carry a nonce");
+    assert_eq!(nonce.len(), 16);
+
+    // both cosigners store the same nonce on the transfer and bare endpoints
+    for party in [&wlt_1, &wlt_2] {
+        let txn = party.wlt().database().begin_transaction().unwrap();
+        let transfers: Vec<DbTransfer> = txn
+            .iter_transfers()
+            .unwrap()
+            .into_iter()
+            .filter(|t| t.recipient_id.as_deref() == Some(&receive_data.recipient_id))
+            .collect();
+        txn.commit().unwrap();
+        assert_eq!(transfers.len(), 1);
+        let transfer = &transfers[0];
+        assert_matches!(
+            &transfer.recipient_type,
+            Some(RecipientTypeFull::Witness { recipient_nonce, .. }) if *recipient_nonce == nonce
+        );
+        let endpoints = party.db_transfer_transport_endpoints_data(transfer.idx);
+        assert!(!endpoints.is_empty());
+        assert!(
+            endpoints
+                .iter()
+                .all(|(_, te)| !te.endpoint.contains("rid_nonce"))
+        );
+    }
+}

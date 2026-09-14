@@ -102,7 +102,7 @@ const DETAILS: &str = "details with ℧nicode characters";
 const PRECISION: u8 = 7;
 #[cfg(any(feature = "electrum", feature = "esplora"))]
 const AMOUNT: u64 = 666;
-#[cfg(feature = "electrum")]
+#[cfg(any(feature = "electrum", feature = "esplora"))]
 const AMOUNT_INFLATION: u64 = 400;
 #[cfg(any(feature = "electrum", feature = "esplora"))]
 const AMOUNT_SMALL: u64 = 66;
@@ -387,6 +387,8 @@ pub(crate) use utils::{api::*, helpers::*};
 // API tests
 #[cfg(feature = "electrum")]
 mod abort_pending_vanilla_tx;
+#[cfg(any(feature = "electrum", feature = "esplora"))]
+mod address_reuse;
 #[cfg(feature = "electrum")]
 mod backup;
 mod blind_receive;

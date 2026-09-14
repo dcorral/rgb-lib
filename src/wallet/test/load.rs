@@ -15,6 +15,7 @@ fn success() {
         database_type: DatabaseType::Sqlite,
         max_allocations_per_utxo: 1,
         supported_schemas: vec![AssetSchema::Nia, AssetSchema::Cfa],
+        reuse_addresses: false,
     };
     let wallet_keys = SinglesigKeys::from_keys(&keys, Some(2));
     let wallet = Wallet::new(wallet_data.clone(), wallet_keys.clone()).unwrap();
@@ -90,6 +91,7 @@ fn new_updates_manifest_success() {
         database_type: DatabaseType::Sqlite,
         max_allocations_per_utxo: 1,
         supported_schemas: vec![AssetSchema::Nia],
+        reuse_addresses: false,
     };
     let wallet = Wallet::new(wallet_data.clone(), SinglesigKeys::from_keys(&keys, None)).unwrap();
     drop(wallet);

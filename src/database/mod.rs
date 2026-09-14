@@ -4,11 +4,11 @@ pub(crate) mod entities;
 use super::*;
 
 use crate::database::entities::{
-    asset, coloring, media, prelude::*, transfer_transport_endpoint, transport_endpoint, txo,
-    wallet_transaction,
+    asset, coloring, media, pending_witness_script, prelude::*, transfer_transport_endpoint,
+    transport_endpoint, txo, wallet_transaction,
 };
 #[cfg(any(feature = "electrum", feature = "esplora"))]
-use crate::database::entities::{batch_transfer, pending_witness_script, reserved_txo};
+use crate::database::entities::{batch_transfer, reserved_txo};
 
 #[derive(Debug, Clone)]
 #[cfg(any(feature = "electrum", feature = "esplora"))]
@@ -140,6 +140,19 @@ impl DbTransfer {
             .and_then(|s| RgbInvoice::from_str(s).ok())
             .map(|invoice| invoice.transports == vec![])
             .unwrap_or(false)
+    }
+
+    /// Key this transfer's consignment is exchanged under on the proxy (see
+    /// [`derive_proxy_recipient_id`]).
+    pub(crate) fn proxy_recipient_id(&self) -> String {
+        let recipient_id = self.recipient_id.clone().unwrap_or_default();
+        let nonce: &[u8] = match &self.recipient_type {
+            Some(RecipientTypeFull::Witness {
+                recipient_nonce, ..
+            }) => recipient_nonce,
+            _ => &[],
+        };
+        derive_proxy_recipient_id(&recipient_id, nonce)
     }
 }
 
@@ -316,10 +329,20 @@ impl DbTxn {
     pub(crate) fn set_pending_witness_script(
         &self,
         pending_witness_script: DbPendingWitnessScriptActMod,
-    ) -> Result<i32, Error> {
-        let res =
-            block_on(PendingWitnessScript::insert(pending_witness_script).exec(self.inner()))?;
-        Ok(res.last_insert_id)
+    ) -> Result<(), Error> {
+        // under address reuse several invoices share one script: keep the existing row (the colored
+        // sync retires it once no incoming witness transfer on the script is pending)
+        let on_conflict = sea_query::OnConflict::column(pending_witness_script::Column::Script)
+            .do_nothing()
+            .to_owned();
+        match block_on(
+            PendingWitnessScript::insert(pending_witness_script)
+                .on_conflict(on_conflict)
+                .exec(self.inner()),
+        ) {
+            Ok(_) | Err(DbErr::RecordNotInserted) => Ok(()),
+            Err(e) => Err(e.into()),
+        }
     }
 
     #[cfg(any(feature = "electrum", feature = "esplora"))]
@@ -913,3 +936,35 @@ impl DbTxn {
 }
 
 pub(crate) mod enums;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const RID: &str = "wvout:BczOakzm-uHua56v-znf1Q~A-BTRpWDb";
+
+    #[test]
+    fn transfer_proxy_recipient_id_uses_stored_nonce() {
+        let mut transfer = DbTransfer {
+            idx: 0,
+            asset_transfer_idx: 0,
+            requested_assignment: None,
+            recipient_type: Some(RecipientTypeFull::Witness {
+                vout: None,
+                recipient_nonce: vec![1u8; 16],
+            }),
+            recipient_id: Some(RID.to_string()),
+            ack: None,
+            invoice_string: None,
+        };
+        assert_eq!(
+            transfer.proxy_recipient_id(),
+            derive_proxy_recipient_id(RID, &[1u8; 16])
+        );
+        transfer.recipient_type = Some(RecipientTypeFull::Witness {
+            vout: None,
+            recipient_nonce: vec![],
+        });
+        assert_eq!(transfer.proxy_recipient_id(), RID);
+    }
+}
