@@ -4113,7 +4113,7 @@ fn fail() {
     let result = party.wallet.send_begin(
         party.online,
         recipient_map.clone(),
-        false,
+        true,
         0,
         MIN_CONFIRMATIONS,
         default_send_expiration(),

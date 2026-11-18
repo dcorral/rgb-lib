@@ -2418,6 +2418,8 @@ impl MultisigWallet {
     /// at least 15 minutes left. It must not be more than [`MAX_EXPIRATION_SECS`] in the future.
     /// [`Error::InvalidExpiration`] is returned otherwise.
     ///
+    /// A `fee_rate` of 0 is refused.
+    ///
     /// Returns a PSBT ready to be signed and the operation index on the hub.
     pub fn send_init(
         &mut self,
@@ -2432,6 +2434,7 @@ impl MultisigWallet {
         info!(self.logger(), "Initiate sending...");
         self.check_online(online)?;
         self.check_is_cosigner()?;
+        self.check_fee_rate(fee_rate)?;
         let txn = self.database().begin_transaction()?;
         let data = self.send_begin_impl(
             &txn,

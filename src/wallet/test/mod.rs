@@ -19,6 +19,14 @@ use std::path::MAIN_SEPARATOR_STR;
 use amplify::set;
 #[cfg(feature = "_online")]
 use bdk_wallet::bitcoin::Denomination;
+#[cfg(feature = "electrum")]
+use bdk_wallet::bitcoin::{
+    CompressedPublicKey, Sequence, Witness as BdkWitness,
+    consensus::encode::{deserialize_hex, serialize_hex},
+    ecdsa::Signature as EcdsaSignature,
+    secp256k1::{Message as SecpMessage, SecretKey},
+    sighash::{EcdsaSighashType, SighashCache},
+};
 use bdk_wallet::descriptor::ExtendedDescriptor;
 #[cfg(feature = "electrum")]
 use biscuit_auth::{KeyPair, builder::date, macros::*};
@@ -128,6 +136,13 @@ const PROXY_HOST_AUTH: &str = "127.0.0.1:3003/json-rpc";
 const PROXY_URL_AUTH: &str = "http://127.0.0.1:3003/json-rpc";
 #[cfg(feature = "electrum")]
 static PROXY_ENDPOINT_AUTH: Lazy<String> = Lazy::new(|| format!("rpc://{PROXY_HOST_AUTH}"));
+#[cfg(feature = "electrum")]
+const PROXY_HOST_SHORT_GRACE: &str = "127.0.0.1:3004/json-rpc";
+#[cfg(feature = "electrum")]
+const PROXY_URL_SHORT_GRACE: &str = "http://127.0.0.1:3004/json-rpc";
+#[cfg(feature = "electrum")]
+static PROXY_ENDPOINT_SHORT_GRACE: Lazy<String> =
+    Lazy::new(|| format!("rpc://{PROXY_HOST_SHORT_GRACE}"));
 // Ed25519 key pair authenticating calls to the proxy-auth service (see tests/compose.yaml)
 #[cfg(feature = "electrum")]
 const PROXY_AUTH_SEED: &str = "c01959890b0f215ff37637c58762a4eab0a2ec8be09c6a8436034c8f34b1c07e";
@@ -733,3 +748,5 @@ mod sync;
 #[cfg(feature = "electrum")]
 mod validate_consignment;
 mod witness_receive;
+#[cfg(feature = "electrum")]
+mod zero_fee;
