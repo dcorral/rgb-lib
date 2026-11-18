@@ -607,6 +607,19 @@ impl Wallet {
         self.send_consignment_path(asset_id, transfer_id)
     }
 
+    /// Return the hex of the signed TX released to the recipient with the given ID, if saved.
+    ///
+    /// <div class="warning">This method is meant for special usage and is normally not needed, use
+    /// it only if you know what you're doing</div>
+    #[cfg(feature = "_online")]
+    pub fn get_received_signed_tx(&self, recipient_id: String) -> Result<Option<String>, Error> {
+        let path = self.get_received_signed_tx_path(&recipient_id);
+        if !path.exists() {
+            return Ok(None);
+        }
+        Ok(Some(hex::encode(fs::read(path)?)))
+    }
+
     /// Complete the donation send operation by updating the DB only. This will also broadcast the
     /// transaction to update the DB with the new UTXOs and BDK.
     ///

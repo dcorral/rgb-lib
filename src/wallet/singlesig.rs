@@ -1022,6 +1022,11 @@ impl Wallet {
     /// This calls [`send_begin`](Wallet::send_begin), signs the resulting PSBT and finally calls
     /// [`send_end`](Wallet::send_end).
     ///
+    /// A `fee_rate` of 0 builds a version 3 TX with no fee and a last pay-to-anchor output, so that a
+    /// child TX that spends that output pays the fee. It needs recipients with transport endpoints, no
+    /// donation and confirmed UTXOs. The wallet never broadcasts this TX: it applies it once found
+    /// on-chain.
+    ///
     /// A wallet with private keys is required.
     pub fn send(
         &mut self,
@@ -1114,6 +1119,11 @@ impl Wallet {
     /// to be fed to the [`send_end`](Wallet::send_end) function to complete the send operation.
     ///
     /// This doesn't require the wallet to have private keys.
+    ///
+    /// A `fee_rate` of 0 builds a version 3 TX with no fee and a last pay-to-anchor output, so that a
+    /// child TX that spends that output pays the fee. It needs recipients with transport endpoints, no
+    /// donation and confirmed UTXOs. The wallet never broadcasts this TX: it applies it once found
+    /// on-chain.
     ///
     /// Returns a PSBT ready to be signed and operation details.
     pub fn send_begin(

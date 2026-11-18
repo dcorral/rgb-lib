@@ -175,6 +175,15 @@ fn broadcast_deadline_passed_beyond_skew_margin(batch_transfer: &DbBatchTransfer
         })
 }
 
+/// Whether the TX is a zero-fee parent: version 3 with a last P2A output.
+fn is_zero_fee_v3_tx(tx: &BdkTransaction) -> bool {
+    tx.version.0 == 3
+        && tx
+            .output
+            .last()
+            .is_some_and(|o| o.script_pubkey == ScriptBuf::new_p2a())
+}
+
 /// Whether the broadcast deadline of an incoming transfer plus the confirmation margin has passed,
 /// after which a transfer whose TX is not confirmed is failed (`v1.0-changes-spec.md` 6.4). A
 /// transfer with no known broadcast deadline is never considered past it.
@@ -1076,6 +1085,18 @@ pub trait WalletOnline: WalletOffline {
             // be broadcast by the sender, so it's safe to fail it, while before that the
             // error could be transient and the transfer could still complete
             Err(e) if expired => {
+                // a released zero-fee TX can confirm until the broadcast deadline
+                if !batch_transfer.incoming
+                    && batch_transfer.status == TransferStatus::WaitingCounterparty
+                    && !broadcast_deadline_passed_beyond_skew_margin(batch_transfer)
+                    && self.is_zero_fee_v3_batch(batch_transfer)?
+                {
+                    info!(
+                        self.logger(),
+                        "Zero-fee TX may be released, fail denied until the broadcast deadline"
+                    );
+                    return Ok(TryFailBatchTransferOutcome::Denied);
+                }
                 warn!(
                     self.logger(),
                     "Failing expired transfer that failed to refresh: {e}"
@@ -1562,6 +1583,16 @@ pub trait WalletOnline: WalletOffline {
             .map_err(InternalError::from)?)
     }
 
+    /// Whether the signed TX of an outgoing batch transfer is a zero-fee parent.
+    fn is_zero_fee_v3_batch(&self, batch_transfer: &DbBatchTransfer) -> Result<bool, Error> {
+        let Some(txid) = &batch_transfer.txid else {
+            return Ok(false);
+        };
+        Ok(is_zero_fee_v3_tx(
+            &self.get_signed_tx(&self.get_transfers_dir().join(txid))?,
+        ))
+    }
+
     /// Verify a downloaded blob against its expected plaintext hash, first decrypting it with the
     /// key shared with the counterparty as dictated by `encryption`, the mode the payload is
     /// expected in: the recipient's invoice preference for consignments and media, always
@@ -1704,6 +1735,7 @@ pub trait WalletOnline: WalletOffline {
 
     /// Decrypt the released signed TX, verify it, save it so it can be broadcast again until the
     /// broadcast deadline (v1.0-changes-spec.md 6.4) and broadcast it.
+    /// A zero-fee TX is saved only: a child TX pays its fee.
     fn broadcast_received_tx(
         &self,
         recipient_id: &str,
@@ -1727,6 +1759,10 @@ pub trait WalletOnline: WalletOffline {
                 details: e.to_string(),
             })?;
         atomic_write(&self.get_received_signed_tx_path(recipient_id), &tx_bytes)?;
+        if is_zero_fee_v3_tx(&tx) {
+            info!(self.logger(), "Not broadcasting the zero-fee signed TX");
+            return Ok(());
+        }
         self.broadcast_tx(tx)?;
         Ok(())
     }
@@ -1746,6 +1782,13 @@ pub trait WalletOnline: WalletOffline {
                     return;
                 }
             };
+        if is_zero_fee_v3_tx(&tx) {
+            info!(
+                self.logger(),
+                "Not broadcasting the zero-fee signed TX again"
+            );
+            return;
+        }
         debug!(self.logger(), "Broadcasting the saved signed TX again");
         if let Err(e) = self.broadcast_tx(tx) {
             warn!(
@@ -4156,6 +4199,10 @@ pub trait WalletOnline: WalletOffline {
             Some(false) => return Ok(Some(self.fail_batch_transfer(txn, batch_transfer)?)),
             None => return Ok(None),
         }
+        // a zero-fee TX is applied once found on-chain
+        if self.is_zero_fee_v3_batch(batch_transfer)? {
+            return self.complete_batch_if_tx_on_chain(txn, batch_transfer);
+        }
         Ok(Some(self.broadcast_batch(txn, batch_transfer)?))
     }
 
@@ -5015,6 +5062,7 @@ pub trait WalletOnline: WalletOffline {
         input_outpoints: HashSet<BdkOutPoint>,
         witness_recipients: &Vec<(ScriptBuf, u64)>,
         fee_rate: FeeRate,
+        zero_fee: bool,
     ) -> Result<(Psbt, Option<BtcChange>), Error> {
         let change_addr = self.get_new_address()?.script_pubkey();
         let mut builder = self.bdk_wallet_mut().build_tx();
@@ -5023,8 +5071,12 @@ pub trait WalletOnline: WalletOffline {
             .add_utxos(&input_outpoints.into_iter().collect::<Vec<_>>())
             .map_err(InternalError::from)?
             .manually_selected_only()
-            .fee_rate(fee_rate)
             .ordering(bdk_wallet::tx_builder::TxOrdering::Untouched);
+        if zero_fee {
+            builder.version(3).fee_absolute(BdkAmount::ZERO);
+        } else {
+            builder.fee_rate(fee_rate);
+        }
         for (script_buf, amount_sat) in witness_recipients {
             builder.add_recipient(script_buf.clone(), BdkAmount::from_sat(*amount_sat));
         }
@@ -5046,6 +5098,16 @@ pub trait WalletOnline: WalletOffline {
             },
         })?;
         self.add_non_witness_utxos(&mut psbt);
+        if zero_fee {
+            // a child TX that spends the P2A output pays the fee
+            psbt.unsigned_tx.output.push(TxOut {
+                value: psbt.fee().map_err(|e| Error::Internal {
+                    details: e.to_string(),
+                })?,
+                script_pubkey: ScriptBuf::new_p2a(),
+            });
+            psbt.outputs.push(Default::default());
+        }
 
         let btc_change = psbt
             .unsigned_tx
@@ -5067,9 +5129,15 @@ pub trait WalletOnline: WalletOffline {
         all_inputs: &mut HashSet<BdkOutPoint>,
         witness_recipients: &Vec<(ScriptBuf, u64)>,
         fee_rate: FeeRate,
+        zero_fee: bool,
     ) -> Result<(Psbt, Option<BtcChange>), Error> {
         Ok(loop {
-            break match self.prepare_psbt(all_inputs.clone(), witness_recipients, fee_rate) {
+            break match self.prepare_psbt(
+                all_inputs.clone(),
+                witness_recipients,
+                fee_rate,
+                zero_fee,
+            ) {
                 Ok(res) => res,
                 Err(Error::InsufficientBitcoins { .. }) => {
                     let used_txos: Vec<Outpoint> =
@@ -6480,20 +6548,26 @@ pub trait WalletOnline: WalletOffline {
         Ok(input_unspents)
     }
 
+    #[allow(clippy::type_complexity)]
     fn get_transfer_begin_data<'txn>(
         &mut self,
         txn: &'txn DbTxn,
         fee_rate: u64,
+        zero_fee_allowed: bool,
     ) -> Result<
         (
             FeeRate,
+            bool,
             Vec<LocalUnspent>,
             Vec<LocalUnspent>,
             RgbStock<'txn>,
         ),
         Error,
     > {
-        let fee_rate_checked = self.check_fee_rate(fee_rate)?;
+        let fee_check = self.check_fee_rate(fee_rate);
+        // fee rate 0 makes a zero-fee TX: a child TX pays the fee
+        let zero_fee = zero_fee_allowed && fee_rate == 0 && fee_check.is_err();
+        let fee_rate_checked = if zero_fee { FeeRate::ZERO } else { fee_check? };
 
         let db_data = txn.get_db_data(false)?;
 
@@ -6514,13 +6588,28 @@ pub trait WalletOnline: WalletOffline {
         unspents.retain(|u| !reserved.contains(&u.utxo.outpoint()));
 
         #[cfg(test)]
-        let input_unspents = mock_input_unspents(self, &unspents);
+        let mut input_unspents = mock_input_unspents(self, &unspents);
         #[cfg(not(test))]
-        let input_unspents = self.get_input_unspents(&unspents)?;
+        let mut input_unspents = self.get_input_unspents(&unspents)?;
+        // no send spends an unconfirmed version 3 output, a zero-fee TX spends only confirmed ones
+        let skip: HashSet<String> = self
+            .bdk_wallet()
+            .transactions()
+            .filter(|t| {
+                !t.chain_position.is_confirmed() && (zero_fee || t.tx_node.tx.version.0 == 3)
+            })
+            .map(|t| t.tx_node.txid.to_string())
+            .collect();
+        input_unspents.retain(|u| !skip.contains(&u.utxo.txid));
+        if zero_fee && input_unspents.is_empty() {
+            return Err(Error::InvalidFeeRate {
+                details: format!("value under minimum {MIN_FEE_RATE}"),
+            });
+        }
 
         let stock = self.rgb_stock(txn)?;
 
-        Ok((fee_rate_checked, unspents, input_unspents, stock))
+        Ok((fee_rate_checked, zero_fee, unspents, input_unspents, stock))
     }
 
     /// Check that a recipient `assignment` is valid for an asset with the given `schema`.
@@ -6771,6 +6860,7 @@ pub trait WalletOnline: WalletOffline {
                 input_unspents,
                 witness_recipients,
                 fee_rate_checked,
+                false,
                 min_confirmations,
                 None,
                 sender_transport_endpoint.clone(),
@@ -6820,6 +6910,7 @@ pub trait WalletOnline: WalletOffline {
         input_unspents: &[LocalUnspent],
         witness_recipients: &Vec<(ScriptBuf, u64)>,
         fee_rate_checked: FeeRate,
+        zero_fee: bool,
         min_confirmations: u8,
         expiration_timestamp: Option<i64>,
         sender_transport_endpoint: Option<String>,
@@ -6844,6 +6935,7 @@ pub trait WalletOnline: WalletOffline {
             &mut all_inputs,
             witness_recipients,
             fee_rate_checked,
+            zero_fee,
         )?;
         psbt.unsigned_tx.output[0].script_pubkey = ScriptBuf::new_op_return([]);
 
@@ -6958,8 +7050,13 @@ pub trait WalletOnline: WalletOffline {
         // earliest invoice expiration among the proxy recipients, bounding the operation one
         let mut min_invoice_expiration: Option<i64> = None;
 
-        let (fee_rate_checked, unspents, input_unspents, mut stock) =
-            self.get_transfer_begin_data(txn, fee_rate)?;
+        let zero_fee_allowed = !donation
+            && recipient_map
+                .values()
+                .flatten()
+                .all(|r| !r.transport_endpoints.is_empty());
+        let (fee_rate_checked, zero_fee, unspents, input_unspents, mut stock) =
+            self.get_transfer_begin_data(txn, fee_rate, zero_fee_allowed)?;
 
         let chainnet: ChainNet = self.bitcoin_network().into();
         let mut witness_recipients: Vec<(ScriptBuf, u64)> = vec![];
@@ -7160,6 +7257,7 @@ pub trait WalletOnline: WalletOffline {
                 &input_unspents,
                 &witness_recipients,
                 fee_rate_checked,
+                zero_fee,
                 min_confirmations,
                 expiration_timestamp,
                 sender_transport_endpoint.clone(),
@@ -7539,8 +7637,8 @@ pub trait WalletOnline: WalletOffline {
             return Err(Error::NoInflationAmounts);
         }
 
-        let (fee_rate_checked, unspents, input_unspents, mut stock) =
-            self.get_transfer_begin_data(txn, fee_rate)?;
+        let (fee_rate_checked, _, unspents, input_unspents, mut stock) =
+            self.get_transfer_begin_data(txn, fee_rate, false)?;
 
         let assignments_needed = AssignmentsCollection {
             inflation,
@@ -7714,8 +7812,8 @@ pub trait WalletOnline: WalletOffline {
         min_confirmations: u8,
         dry_run: bool,
     ) -> Result<BeginOperationData, Error> {
-        let (fee_rate_checked, unspents, input_unspents, mut stock) =
-            self.get_transfer_begin_data(txn, fee_rate)?;
+        let (fee_rate_checked, _, unspents, input_unspents, mut stock) =
+            self.get_transfer_begin_data(txn, fee_rate, false)?;
 
         let asset_spend = self.select_rgb_inputs(
             asset.id.clone(),
@@ -7985,8 +8083,8 @@ pub trait WalletOnline: WalletOffline {
         let operation_sk = gen_ed25519();
         let operation_secret_key = operation_sk.to_bytes().to_vec();
 
-        let (fee_rate_checked, unspents, input_unspents, mut stock) =
-            self.get_transfer_begin_data(txn, fee_rate)?;
+        let (fee_rate_checked, _, unspents, input_unspents, mut stock) =
+            self.get_transfer_begin_data(txn, fee_rate, false)?;
 
         // refuse to spend the last mint right to avoid leaving the wallet unable to mint
         let mint_rights = input_unspents
