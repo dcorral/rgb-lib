@@ -1144,6 +1144,21 @@ fn fail() {
         .unwrap_err();
     assert_eq!(err, Error::UnsupportedTransportType);
 
+    // fee rate 0
+    let err = wlt_1
+        .multisig
+        .send_init(
+            wlt_1.online,
+            HashMap::new(),
+            false,
+            0,
+            MIN_CONFIRMATIONS,
+            default_send_expiration(),
+            PROXY_ENDPOINT.clone(),
+        )
+        .unwrap_err();
+    assert_matches!(err, Error::InvalidFeeRate { details: m } if m == FEE_MSG_LOW);
+
     // no cosigners supplied
     let invalid_multisig_wlt_keys = MultisigKeys::new(vec![], threshold_colored, threshold_vanilla);
     let res = MultisigWallet::new(get_test_wallet_data(&data_dir), invalid_multisig_wlt_keys);
